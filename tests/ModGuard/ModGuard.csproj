@@ -5,5 +5,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
-  <ItemGroup><Compile Include="../../mod/PCFish.Automation/Contracts.cs" Link="Contracts.cs" /></ItemGroup>
+  <ItemGroup>
+    <Compile Include="../../mod/PCFish.Automation/Contracts.cs" Link="Contracts.cs" />
+    <Compile Include="../../mod/PCFish.Automation/MarketProtection.cs" Link="MarketProtection.cs" />
+  </ItemGroup>
 </Project>

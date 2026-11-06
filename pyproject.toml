@@ -9,6 +9,9 @@ description = "Economic breeding planner and local IL2CPP automation bridge for 
 requires-python = ">=3.12"
 dependencies = []
 
+[project.optional-dependencies]
+automation = ["selenium>=4.52.0,<5"]
+
 [project.scripts]
 pcfish-plan = "pcfish_planner.cli:main"
 

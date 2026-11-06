@@ -146,4 +146,87 @@ catch (IOException) { }
 Check(indicators.LastHearts == 0 && refreshes == beforeFailure, "failed redraw is not cached as synchronized");
 authoritativeHearts = 1;
 Check(indicators.Sync(1, 5, 760, Redraw) && renderedHearts == 1, "retry repairs HUD when native view becomes ready");
+// Market mode replaces the grade cutoff only after matching, current evidence.
+Settings MarketSettings() => new() { enabled = true, mode = "protected", protection_mode = "market" };
+FishState MarketFish(string id) => new() { id = id, species = "ordinary", variant = "variant", level = 1, grade = 5,
+    remaining_breeds = 1, maximum_breeds = 2, ready = true, market_hash_name = "Example Fish ★★★★★" };
+MarketReview Review(string id, double price = 999) => new() { id = id, species = "ordinary", variant = "variant", grade = 5,
+    remaining_breeds = 1, maximum_breeds = 2, market_hash_name = "Example Fish ★★★★★", currency_id = 16,
+    checked_at = 1000, valid_until = 87400, seller_proceeds_krw = price, matching_listings = 1, complete = true, trades_30d = 3 };
+MarketReport Report(params MarketReview[] reviews) => new() { schema_version = 1, session = "test", config_digest = "config", fish = reviews };
+foreach(var bad in new[] { "none", "session", "config", "duplicate", "species", "variant", "grade", "breeds", "maximum", "name", "currency", "stale", "future", "nonfinite", "negative", "empty", "partial", "inactive", "extended" })
+{
+    var f = MarketFish("a"); var r = Review("a"); var report = Report(r); var cfg = MarketSettings();
+    switch(bad)
+    {
+        case "none": report = null!; break;
+        case "session": report.session = "other"; break;
+        case "config": report.config_digest = "other"; break;
+        case "duplicate": report.fish = [r, r]; break;
+        case "species": r.species = "other"; break;
+        case "variant": r.variant = "other"; break;
+        case "grade": r.grade = 4; break;
+        case "breeds": r.remaining_breeds = 0; break;
+        case "maximum": r.maximum_breeds = 3; break;
+        case "name": r.market_hash_name = "other"; break;
+        case "currency": r.currency_id = 1; break;
+        case "stale": r.valid_until = 1100; break;
+        case "future": r.checked_at = 1101; break;
+        case "nonfinite": r.seller_proceeds_krw = double.NaN; break;
+        case "negative": r.seller_proceeds_krw = -1; break;
+        case "empty": r.matching_listings = 0; break;
+        case "partial": r.complete = false; break;
+        case "inactive": r.trades_30d = 0; break;
+        case "extended": r.valid_until = 87401; break;
+    }
+    MarketProtection.Apply(f, report!, cfg, "test", "config", 1100);
+    Check(f.market_state == "pending", "market evidence rejected: " + bad);
+    var state = new Snapshot { captured_at = 1100, hearts = 1, capacity = 999, fish = [f, MarketFish("b")] };
+    Reject(() => {}, Breed(), state, cfg);
+}
+var marketCfg = MarketSettings();
+var pricedFish = new[] { MarketFish("a"), MarketFish("b") };
+foreach(var f in pricedFish) MarketProtection.Apply(f, Report(Review(f.id)), marketCfg, "test", "config", 1100);
+var marketSnapshot = new Snapshot { captured_at = 1100, hearts = 1, capacity = 999, fish = pricedFish };
+ExecutionGuard.Validate(Breed(), marketSnapshot, marketCfg); checkedCases++;
+Check(pricedFish.All(f => f.market_state == "release"), "cheap five-star fish can breed after review");
+foreach(var price in new[] { 1000.0, 2000.0 })
+{
+    var keep = MarketFish("a"); var evidence = Review("a", price); evidence.complete = false; evidence.trades_30d = 0;
+    MarketProtection.Apply(keep, Report(evidence), marketCfg, "test", "config", 1100);
+    Check(keep.market_state == "keep" && MarketProtection.CanLock(keep, marketCfg, marketSnapshot), "threshold locks even with sparse listings");
+    keep.locked = true;
+    Check(!MarketProtection.CanLock(keep, marketCfg, marketSnapshot), "never toggle existing lock");
+}
+foreach(var field in new[] { "pause", "busy", "pending", "uncertain" })
+{
+    var f = MarketFish("a"); f.market_state = "keep"; f.market_valid_until = 4600;
+    var s = new Snapshot { captured_at = 1100 }; var cfg = MarketSettings();
+    switch(field) { case "pause": cfg.enabled = false; break; case "busy": s.ui_busy = true; break;
+        case "pending": s.request_in_flight = true; break; case "uncertain": s.uncertain = true; break; }
+    Check(!MarketProtection.CanLock(f, cfg, s), "market lock interlock: " + field);
+}
+var cheapMaterials = Enumerable.Range(0,10).Select(i => MarketFish(i.ToString())).ToArray();
+foreach(var f in cheapMaterials) { f.remaining_breeds = 0; f.market_state = "release"; f.market_valid_until = 4600; }
+var marketMerge = new Command { request_id = Guid.NewGuid().ToString(), kind = "merge", fish_ids = cheapMaterials.Select(f => f.id).ToArray() };
+var marketFull = new Snapshot { captured_at = 1100, capacity = 10, fish = cheapMaterials };
+ExecutionGuard.Validate(marketMerge, marketFull, marketCfg); checkedCases++;
+Reject(() => cheapMaterials[0].locked = true, marketMerge, marketFull, marketCfg);
+cheapMaterials[0].locked = false;
+Reject(() => cheapMaterials[0].market_valid_until = 1100, marketMerge, marketFull, marketCfg);
+bool nativeLocked = false; int toggles = 0;
+bool ToggleLock() { nativeLocked = !nativeLocked; toggles++; return true; }
+Check(MarketProtection.EnsureLocked(() => nativeLocked, ToggleLock) && nativeLocked && toggles == 1, "normal game toggle locks once");
+Check(!MarketProtection.EnsureLocked(() => nativeLocked, ToggleLock) && nativeLocked && toggles == 1, "repeat/restart never unlocks existing fish");
+var cheapPartial = MarketFish("a"); var cheapEvidence = Review("a"); cheapEvidence.complete = false; cheapEvidence.matching_listings = 3;
+MarketProtection.Apply(cheapPartial, Report(cheapEvidence), marketCfg, "test", "config", 1100);
+Check(cheapPartial.market_state == "release", "three matching cheap listings suffice on partial page");
+var cachedFish = MarketFish("a"); var cachedReport = Report(Review("a"));
+foreach(var age in new[] { 3601, 43200, 86399 })
+{
+    MarketProtection.Apply(cachedFish, cachedReport, marketCfg, "test", "config", 1000 + age);
+    Check(cachedFish.market_state == "release", "24-hour cache usable after " + age + " seconds");
+}
+MarketProtection.Apply(cachedFish, cachedReport, marketCfg, "test", "config", 87400);
+Check(cachedFish.market_state == "pending", "24-hour boundary requires refreshed evidence");
 Console.WriteLine($"PASS {checkedCases} native execution guard cases");
