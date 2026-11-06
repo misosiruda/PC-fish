@@ -20,6 +20,7 @@ import uuid
 from .engine import Planner, Problem, ValidationError
 from .learning import learn_rules
 from .probabilities import breed_level_probabilities, merge_level_probabilities
+from .market import MarketMonitor, market_settings
 
 
 def atomic(path: Path, value: dict) -> None:
@@ -55,8 +56,14 @@ def read_json(path: Path) -> dict:
     return json.loads(read_text(path))
 
 
-def protected(fish: dict, config: dict) -> bool:
-    return (fish['locked'] or fish['seasonal'] or fish['grade'] >= config.get('protect_grade_at_least', 3)
+def protected(fish: dict, config: dict, now: float | None = None) -> bool:
+    market_mode = market_settings(config)[0] == 'market'
+    now = time.time() if now is None else now
+    valid_until = fish.get('market_valid_until', 0)
+    price_protected = (not fish['basic'] and (fish.get('market_state') != 'release'
+                       or type(valid_until) not in (int, float) or not math.isfinite(valid_until)
+                       or valid_until <= now)) if market_mode else fish['grade'] >= config.get('protect_grade_at_least', 3)
+    return (fish['locked'] or fish['seasonal'] or price_protected
             or fish['id'] in config.get('reserved_ids', []) or fish['species'] in config.get('reserved_species', []))
 
 
@@ -92,7 +99,7 @@ def protected_plan(s: dict, config: dict) -> dict:
     them. Replan immediately after every actual outcome instead.
     """
     now = s['captured_at']
-    pool = [f for f in s['fish'] if not protected(f, config)]
+    pool = [f for f in s['fish'] if not protected(f, config, now)]
     if config.get('auto_merge', True):
         materials = [f for f in pool if not f['basic'] and f['remaining_breeds'] == 0 and f['level'] > 0]
         groups = defaultdict(list)
@@ -104,7 +111,7 @@ def protected_plan(s: dict, config: dict) -> dict:
         if batches:
             batch = max(batches, key=lambda b: (sum(f['level'] for f in b), -sum(f['grade'] for f in b)))
             return {'kind': 'merge', 'fish_ids': [f['id'] for f in batch],
-                    'reason': 'Exhausted ordinary fish batch; protected Grade/season/locks excluded',
+                    'reason': 'Exhausted ordinary fish batch; preservation policy/season/locks excluded',
                     'forecast_levels': merge_level_probabilities([f['level'] for f in batch]),
                     'objective': 'protected_rarity_progress', 'profit_estimate': None}
     if not config.get('auto_breed', True) or len(s['fish']) >= s['capacity']:
@@ -189,18 +196,19 @@ def economic_plan(s: dict, config: dict) -> dict:
     for f in s['fish']:
         fishes.append({'id': f['id'], 'species': f['species'], 'level': f['level'], 'grade': f['grade'],
                        'remaining_breeds': f['remaining_breeds'], 'ready_at': f['ready_at'] if not f['basic'] or f['ready'] else s['captured_at'] + 86400,
-                       'unlimited_breeding': f['basic'], 'protected_breed': protected(f, config) or not config.get('auto_breed', True),
-                       'protected_merge': protected(f, config) or not config.get('auto_merge', True), 'seasonal': f['seasonal']})
+                       'unlimited_breeding': f['basic'], 'protected_breed': protected(f, config, s['captured_at']) or not config.get('auto_breed', True),
+                       'protected_merge': protected(f, config, s['captured_at']) or not config.get('auto_merge', True), 'seasonal': f['seasonal']})
     payload['schema_version'] = 1
     payload['state'] = {'now': s['captured_at'], 'fish': fishes, 'hearts': s['hearts'], 'next_heart_at': s['next_heart_at']}
     payload.setdefault('config', {}).update(allow_assumptions=False, inventory_capacity=s['capacity'],
-                                          protect_merge_grade_at_least=config.get('protect_grade_at_least', 3), allow_seasonal_merge=False)
+                                          protect_merge_grade_at_least=6 if market_settings(config)[0] == 'market' else config.get('protect_grade_at_least', 3), allow_seasonal_merge=False)
     recommendation = Planner(Problem(payload)).run()
     return {**recommendation['action'], 'reason': recommendation['reason'], 'economic_details': recommendation}
 
 
 def decide(s: dict, config: dict, now: float) -> dict:
     validate_snapshot(s)
+    market_settings(config)
     if now - s['captured_at'] > 5 or s['captured_at'] > now + 2:
         return {'kind': 'hold', 'reason': 'Snapshot stale'}
     if not config.get('enabled') or config.get('mode') == 'observe':
@@ -219,16 +227,19 @@ def decide(s: dict, config: dict, now: float) -> dict:
 def run(runtime: Path, config_path: Path, session: str) -> None:
     last_observation_count = -1
     started = time.monotonic()
+    market = MarketMonitor(runtime)
     while True:
         try:
             snapshot_path = runtime / 'snapshot.json'
             if not snapshot_path.exists():
                 if time.monotonic() - started > 30:
+                    market.close()
                     return
                 time.sleep(1)
                 continue
             s = read_json(snapshot_path)
             if s['session'] != session or time.time() - s['captured_at'] > 30:
+                market.close()
                 return  # Game stopped/restarted; no orphan worker.
             raw = read_text(config_path)
             cfg = json.loads(raw)
@@ -236,6 +247,9 @@ def run(runtime: Path, config_path: Path, session: str) -> None:
             if digest != s['config_digest']:
                 time.sleep(1)
                 continue
+            if market_settings(cfg)[0] == 'market' and cfg.get('enabled') and cfg.get('mode') != 'observe':
+                validate_snapshot(s)
+                market.update(s, cfg, time.time())
             events = sorted((runtime / 'events').glob('*.json'))
             if len(events) != last_observation_count:
                 records = [read_json(p) for p in events]

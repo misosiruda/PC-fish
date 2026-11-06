@@ -14,6 +14,61 @@ from test_bridge import CONFIG, live_fish, snapshot
 
 
 class WorkerIPCTests(unittest.TestCase):
+    def test_market_worker_holds_unknown_and_emits_only_after_native_review(self):
+        # Seed only a synthetic cache: this subprocess test never contacts Steam.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d); cfg_path = root / 'config.json'
+            atomic(cfg_path, {**CONFIG, 'protection_mode': 'market'})
+            name = 'Example Fish ★★★★★'
+            fish = [live_fish(id, grade=5) for id in ('a', 'b')]
+            for f in fish:
+                f.update(maximum_breeds=2, market_hash_name=name, market_state='pending', market_valid_until=0)
+            now = time.time()
+            atomic(root / 'market-cache.json', {'schema_version': 1, 'next_request_at': now + 3600, 'quotes': {
+                name: {'market_hash_name': name, 'checked_at': now, 'currency_id': 16, 'complete': True,
+                       'trades_30d': 10, 'samples': [{'remaining_breeds': 1, 'maximum_breeds': 2,
+                                                   'seller_proceeds_krw': 500, 'buyer_total_krw': 580}]}}})
+            s = snapshot(fish)
+
+            def publish():
+                s['captured_at'] = time.time()
+                s['config_digest'] = sha256(cfg_path.read_bytes()).hexdigest()
+                atomic(root / 'snapshot.json', s)
+
+            def wait_for(check):
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline:
+                    publish()
+                    if check(): return
+                    self.assertIsNone(proc.poll())
+                    time.sleep(.1)
+                self.fail('market worker did not reach expected state')
+
+            publish()
+            proc = subprocess.Popen([sys.executable, '-m', 'pcfish_planner.bridge', '--runtime', str(root), '--config', str(cfg_path),
+                                     '--pid', str(os.getpid()), '--session', 'test'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                wait_for(lambda: (root / 'recommendation.json').exists())
+                report = read_json(root / 'market-review.json')
+                self.assertEqual([r['state'] for r in report['fish']], ['release', 'release'])
+                self.assertEqual(read_json(root / 'recommendation.json')['kind'], 'hold')
+                self.assertFalse((root / 'command.json').exists())
+                # Simulate the next native Capture after it independently verifies
+                # identity, evidence freshness, thresholds and the config digest.
+                for f in fish: f.update(market_state='release', market_valid_until=now + 3600)
+                s['revision'] = 'native-reviewed'
+                wait_for(lambda: (root / 'command.json').exists())
+                command = read_json(root / 'command.json')
+                self.assertEqual(command['kind'], 'breed')
+                self.assertEqual(command['revision'], 'native-reviewed')
+                self.assertEqual(command['config_digest'], report['config_digest'])
+                s['session'] = 'replacement'; publish()
+                self.assertEqual(proc.wait(timeout=5), 0)
+            finally:
+                if proc.poll() is None: proc.terminate()
+                _, stderr = proc.communicate(timeout=5)
+                self.assertEqual(stderr, b'')
+
     def test_config_hash_matches_native_reader_with_bom_and_crlf(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / 'config.json'

@@ -9,7 +9,9 @@ internal static class ExecutionGuard
         if (!Guid.TryParse(cmd.request_id, out _) || cmd.fish_ids == null || cmd.fish_ids.Distinct().Count() != cmd.fish_ids.Length) throw new InvalidDataException("Invalid request identity");
         if (s.ui_busy || s.uncertain || s.request_in_flight) throw new InvalidDataException("Game busy");
         var selected = cmd.fish_ids.Select(id => s.fish.Single(f => f.id == id)).ToArray();
-        if (selected.Any(f => f.locked || f.seasonal || f.grade >= c.protect_grade_at_least || c.reserved_ids.Contains(f.id) || c.reserved_species.Contains(f.species)))
+        if (selected.Any(f => f.locked || f.seasonal || (c.protection_mode == "market"
+                ? !f.basic && (f.market_state != "release" || f.market_valid_until <= s.captured_at)
+                : f.grade >= c.protect_grade_at_least) || c.reserved_ids.Contains(f.id) || c.reserved_species.Contains(f.species)))
             throw new InvalidDataException("Protected fish selected");
         if (cmd.kind == "breed")
         {
@@ -81,6 +83,10 @@ internal sealed class Settings
     public bool auto_merge { get; set; } = true;
     public bool auto_level_up { get; set; } = true;
     public int protect_grade_at_least { get; set; } = 3;
+    public string protection_mode { get; set; } = "grade";
+    public double market_min_seller_proceeds_krw { get; set; } = 1000;
+    public double market_quote_ttl_seconds { get; set; } = 86400;
+    public double market_request_interval_seconds { get; set; } = 30;
     public string[] reserved_ids { get; set; } = [];
     public string[] reserved_species { get; set; } = [];
     public double minimum_action_interval_seconds { get; set; } = 10;
@@ -88,7 +94,10 @@ internal sealed class Settings
     public string project_root { get; set; } = "";
     public void Validate()
     {
-        if (mode is not ("observe" or "protected" or "economic") || protect_grade_at_least is < 2 or > 5 || minimum_action_interval_seconds < 5 || reserved_ids == null || reserved_species == null)
+        if (mode is not ("observe" or "protected" or "economic") || protect_grade_at_least is < 2 or > 5 || !double.IsFinite(minimum_action_interval_seconds) || minimum_action_interval_seconds < 5 || reserved_ids == null || reserved_species == null
+            || protection_mode is not ("grade" or "market") || !double.IsFinite(market_min_seller_proceeds_krw) || market_min_seller_proceeds_krw <= 0
+            || !double.IsFinite(market_quote_ttl_seconds) || market_quote_ttl_seconds is < 60 or > 86400
+            || !double.IsFinite(market_request_interval_seconds) || market_request_interval_seconds is < 30 or > 3600)
             throw new InvalidDataException("Invalid automation settings");
     }
 }
@@ -100,6 +109,11 @@ internal sealed class FishState
     public int level { get; set; }
     public int grade { get; set; }
     public int remaining_breeds { get; set; }
+    public int maximum_breeds { get; set; }
+    public string market_hash_name { get; set; } = "";
+    public string market_state { get; set; } = "pending";
+    public double market_valid_until { get; set; }
+    public double? market_seller_proceeds_krw { get; set; }
     public int growth { get; set; }
     public double ready_at { get; set; }
     public bool ready { get; set; }

@@ -17,7 +17,7 @@ using UnityEngine;
 
 namespace PCFish.Automation;
 
-[BepInPlugin("local.pcfish.automation", "PC FISH Automation", "0.2.2")]
+[BepInPlugin("local.pcfish.automation", "PC FISH Automation", "0.3.0")]
 public sealed class Plugin : BasePlugin
 {
     internal static Plugin Current = null!;
@@ -28,6 +28,7 @@ public sealed class Plugin : BasePlugin
     bool uncertain, inFlight;
     int lastTankLevel = -1, lastTankExp = -1, levelUpCount;
     readonly TankIndicatorSynchronizer tankIndicators = new();
+    readonly Dictionary<string, string> marketNames = new();
     Process worker;
     Il2CppSystem.Action<NetworkResult, bool, string> callback;
 
@@ -74,7 +75,7 @@ public sealed class Plugin : BasePlugin
         }
     }
     void Status(string state, object extra = null) => Atomic(Path.Combine(root, "status.json"), new
-    { version = "0.2.2", session, captured_at = Now, state, message, in_flight = inFlight, uncertain, pending_id = pendingId,
+    { version = "0.3.0", session, captured_at = Now, state, message, in_flight = inFlight, uncertain, pending_id = pendingId,
         heart_indicator_synced_to = tankIndicators.LastHearts,
         tank_level = lastTankLevel, tank_exp = lastTankExp, automatic_level_ups = levelUpCount, worker_running = worker is { HasExited: false }, extra });
 
@@ -96,7 +97,7 @@ public sealed class Plugin : BasePlugin
             { message = "Waiting for loaded aquarium"; Status("loading"); return; }
             RefreshTankIndicators(data, game);
             if (inFlight && Now - dispatchedAt > 60) { uncertain = true; message = "Request timed out; manual reconciliation required"; }
-            var snapshot = Capture(data, ui, Digest(raw));
+            var snapshot = Capture(data, ui, Digest(raw), cfg);
             Atomic(Path.Combine(root, "snapshot.json"), snapshot);
             if (!cfg.enabled || cfg.mode == "observe") { message = "Observation mode"; Status("paused", new { fish = snapshot.fish.Length }); return; }
             if (uncertain) { Status("uncertain"); return; }
@@ -106,6 +107,7 @@ public sealed class Plugin : BasePlugin
                 message = inFlight ? "Waiting for confirmed game result" : snapshot.ui_busy ? snapshot.ui_block_reason : "Waiting for action interval";
                 Status("waiting"); return;
             }
+            if (TryMarketLock(snapshot, cfg, data, game, ui)) return;
             var commandPath = Path.Combine(root, "command.json");
             if (!File.Exists(commandPath)) { message = "Automation active; awaiting planner's next action"; Status("ready"); return; }
             var cmd = JsonSerializer.Deserialize<Command>(ReadText(commandPath));
@@ -140,10 +142,21 @@ public sealed class Plugin : BasePlugin
         worker = Process.Start(start) ?? throw new IOException("Planner worker failed to start");
     }
 
-    Snapshot Capture(GameDataManager data, UIManager ui, string configDigest)
+    Snapshot Capture(GameDataManager data, UIManager ui, string configDigest, Settings cfg)
     {
         var fishes = new List<FishState>();
         var types = CSVLoader.Instance.fishTypeList;
+        MarketReport market = null;
+        if (cfg.protection_mode == "market")
+        {
+            try
+            {
+                var path = Path.Combine(root, "market-review.json");
+                if (File.Exists(path)) market = JsonSerializer.Deserialize<MarketReport>(ReadText(path));
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException)
+            { /* Missing or malformed evidence leaves every ordinary fish protected. */ }
+        }
         for (int i = 0; i < data.fishList.Count; i++)
         {
             var f = data.fishList[i];
@@ -155,10 +168,13 @@ public sealed class Plugin : BasePlugin
             {
                 readyAt = DateTimeOffset.TryParse(f.BreedNextDatetime, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var dt) ? dt.ToUnixTimeSeconds() : Now + 86400;
             }
-            fishes.Add(new FishState { id = f.Id, species = f.Type, variant = f.Fish, level = f.Level, grade = f.Grade,
-                remaining_breeds = f.BreedCount, growth = f.Growth, ready_at = readyAt,
+            var state = new FishState { id = f.Id, species = f.Type, variant = f.Fish, level = f.Level, grade = f.Grade,
+                remaining_breeds = f.BreedCount, maximum_breeds = f.BreedMaxCount, growth = f.Growth, ready_at = readyAt,
+                market_hash_name = cfg.protection_mode == "market" && known && !basic ? MarketName(f.Type, f.Grade) : "",
                 ready = !cool && (basic ? f.Growth >= GameConfig.CF_FISH_GROWTH_MAX : f.BreedCount > 0),
-                basic = basic, locked = f.IsLocked, seasonal = !known || types![f.Type].Season > 0, placed = f.IsPlaced });
+                basic = basic, locked = f.IsLocked, seasonal = !known || types![f.Type].Season > 0, placed = f.IsPlaced };
+            MarketProtection.Apply(state, market, cfg, session, configDigest, Now);
+            fishes.Add(state);
         }
         var fish = fishes.OrderBy(f => f.id, StringComparer.Ordinal).ToArray();
         lastTankLevel = data.tankLevel; lastTankExp = data.tankExp;
@@ -188,6 +204,40 @@ public sealed class Plugin : BasePlugin
 
     static bool Visible(GameObject view) => view != null && view.activeInHierarchy;
 
+    string MarketName(string species, int grade)
+    {
+        if (grade is < 1 or > 5) return "";
+        if (!marketNames.TryGetValue(species, out var name))
+        {
+            string term = "Fish/" + species.ToLowerInvariant();
+            name = I2.Loc.LocalizationManager.GetTranslation(term, true, 0, true, false, null, "English", true);
+            if (string.IsNullOrWhiteSpace(name) || name == term || name.Contains('/')) return "";
+            marketNames[species] = name;
+        }
+        return name + " " + new string('★', grade);
+    }
+
+    bool TryMarketLock(Snapshot before, Settings cfg, GameDataManager data, GameManager game, UIManager ui)
+    {
+        var keep = before.fish.FirstOrDefault(f => MarketProtection.CanLock(f, cfg, before));
+        if (keep == null) return false;
+        FishModel native = null;
+        for (int i = 0; i < data.fishList.Count; i++) if (data.fishList[i].Id == keep.id) { native = data.fishList[i]; break; }
+        // FishUtil.Lock toggles. Never call it on an already locked fish.
+        if (native == null || !MarketProtection.EnsureLocked(() => native.IsLocked, () => FishUtil.Lock(native))) return false;
+        var events = Path.Combine(root, "market-lock-events");
+        Directory.CreateDirectory(events);
+        Atomic(Path.Combine(events, Guid.NewGuid().ToString("N") + ".json"), new { kind = "market_lock", confirmed = true,
+            completed_at = Now, fish_id = keep.id, keep.market_hash_name, keep.remaining_breeds, keep.maximum_breeds,
+            seller_proceeds_krw = keep.market_seller_proceeds_krw, threshold_krw = cfg.market_min_seller_proceeds_krw });
+        game.OnRefresh?.Invoke();
+        Atomic(Path.Combine(root, "snapshot.json"), Capture(data, ui, before.config_digest, cfg));
+        message = $"Locked valuable fish: {keep.market_hash_name}";
+        nextActionAt = Now + 1;
+        Status("market_locked");
+        return true;
+    }
+
     void RefreshTankIndicators(GameDataManager data, GameManager game)
         => tankIndicators.Sync(data.breedCount, data.tankLevel, data.tankExp, () => game.CheckTankShowPopup());
 
@@ -202,7 +252,7 @@ public sealed class Plugin : BasePlugin
             if (popup.gameObject.activeInHierarchy) throw new InvalidDataException("Level reward popup did not close");
             message = "Dismissed level-up reward popup";
             Log.LogInfo(message);
-            Atomic(Path.Combine(root, "snapshot.json"), Capture(data, ui, before.config_digest));
+            Atomic(Path.Combine(root, "snapshot.json"), Capture(data, ui, before.config_digest, cfg));
             Status("ready");
             return true;
         }
@@ -223,7 +273,7 @@ public sealed class Plugin : BasePlugin
         RefreshTankIndicators(data, game);
         game.OnRefresh?.Invoke();
         game.OnReddotStatus?.Invoke();
-        var after = Capture(data, ui, before.config_digest);
+        var after = Capture(data, ui, before.config_digest, cfg);
         Atomic(Path.Combine(events, id + ".json"), new { event_id = id, kind = "level_up", confirmed = true, completed_at = Now,
             before_level = before.tank_level, after_level = after.tank_level, before_exp = before.tank_exp, after_exp = after.tank_exp,
             required_cumulative_exp = before.next_level_exp, before_fish_count = before.fish.Length, after_fish_count = after.fish.Length });
@@ -231,7 +281,7 @@ public sealed class Plugin : BasePlugin
         inFlight = false; pendingId = ""; levelUpCount++; nextActionAt = Now + 1;
         message = $"Confirmed tank level-up {before.tank_level} -> {after.tank_level}";
         Log.LogInfo(message);
-        Atomic(Path.Combine(root, "snapshot.json"), Capture(data, ui, before.config_digest));
+        Atomic(Path.Combine(root, "snapshot.json"), Capture(data, ui, before.config_digest, cfg));
         Status("confirmed");
         return true;
     }
@@ -269,7 +319,7 @@ public sealed class Plugin : BasePlugin
                     RefreshTankIndicators(data, game);
                     game.OnRefresh?.Invoke();
                     game.OnReddotStatus?.Invoke();
-                    var after = Capture(data, ui, before.config_digest);
+                    var after = Capture(data, ui, before.config_digest, cfg);
                     var child = after.fish.SingleOrDefault(f => f.id == childId);
                     if (child == null || before.fish.Any(f => f.id == childId)) throw new InvalidDataException("Success child was not a new inventory item");
                     var parents = cmd.fish_ids.Select(id => before.fish.Single(f => f.id == id)).ToArray();
