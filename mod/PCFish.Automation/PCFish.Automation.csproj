@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net6.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <NoWarn>CS8632</NoWarn>
+    <LangVersion>12</LangVersion>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <GameRoot Condition="'$(GameRoot)' == ''">C:\Program Files (x86)\Steam\steamapps\common\PC FISH</GameRoot>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="$(GameRoot)\BepInEx\core\BepInEx.Core.dll" Private="false" />
+    <Reference Include="$(GameRoot)\BepInEx\core\BepInEx.Unity.IL2CPP.dll" Private="false" />
+    <Reference Include="$(GameRoot)\BepInEx\core\Il2CppInterop.Runtime.dll" Private="false" />
+    <Reference Include="$(GameRoot)\BepInEx\interop\Assembly-CSharp.dll" Private="false" />
+    <Reference Include="$(GameRoot)\BepInEx\interop\Assembly-CSharp-firstpass.dll" Private="false" />
+    <Reference Include="$(GameRoot)\BepInEx\interop\Il2Cppmscorlib.dll" Private="false" />
+    <Reference Include="$(GameRoot)\BepInEx\interop\UnityEngine.CoreModule.dll" Private="false" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "currency": "KRW",
+  "synthetic": true,
+  "state": {
+    "now": 0,
+    "hearts": 1,
+    "next_heart_at": 360,
+    "fish": [
+      {
+        "id": "low-a",
+        "species": "species3",
+        "level": 3,
+        "grade": 1,
+        "remaining_breeds": 1,
+        "ready_at": 0
+      },
+      {
+        "id": "low-b",
+        "species": "species3",
+        "level": 3,
+        "grade": 1,
+        "remaining_breeds": 1,
+        "ready_at": 0
+      },
+      {
+        "id": "high-a",
+        "species": "species4",
+        "level": 4,
+        "grade": 1,
+        "remaining_breeds": 1,
+        "ready_at": 120
+      },
+      {
+        "id": "high-b",
+        "species": "species5",
+        "level": 5,
+        "grade": 1,
+        "remaining_breeds": 1,
+        "ready_at": 120
+      }
+    ]
+  },
+  "config": {
+    "allow_assumptions": true,
+    "horizon_seconds": 300,
+    "max_actions": 1
+  },
+  "rules": [],
+  "quotes": [
+    {
+      "species": "species3",
+      "grade": 1,
+      "remaining_breeds": 0,
+      "net_proceeds": 10,
+      "sale_probability": 1,
+      "captured_at": 0,
+      "source": "synthetic test fixture",
+      "evidence": "synthetic"
+    },
+    {
+      "species": "species3",
+      "grade": 1,
+      "remaining_breeds": 1,
+      "net_proceeds": 10,
+      "sale_probability": 1,
+      "captured_at": 0,
+      "source": "synthetic test fixture",
+      "evidence": "synthetic"
+    },
+    {
+      "species": "species4",
+      "grade": 1,
+      "remaining_breeds": 0,
+      "net_proceeds": 10,
+      "sale_probability": 1,
+      "captured_at": 0,
+      "source": "synthetic test fixture",
+      "evidence": "synthetic"
+    },
+    {
+      "species": "species4",
+      "grade": 1,
+      "remaining_breeds": 1,
+      "net_proceeds": 10,
+      "sale_probability": 1,
+      "captured_at": 0,
+      "source": "synthetic test fixture",
+      "evidence": "synthetic"
+    },
+    {
+      "species": "species5",
+      "grade": 1,
+      "remaining_breeds": 0,
+      "net_proceeds": 10,
+      "sale_probability": 1,
+      "captured_at": 0,
+      "source": "synthetic test fixture",
+      "evidence": "synthetic"
+    },
+    {
+      "species": "species5",
+      "grade": 1,
+      "remaining_breeds": 1,
+      "net_proceeds": 10,
+      "sale_probability": 1,
+      "captured_at": 0,
+      "source": "synthetic test fixture",
+      "evidence": "synthetic"
+    },
+    {
+      "species": "child2",
+      "grade": 1,
+      "remaining_breeds": 0,
+      "net_proceeds": 1,
+      "sale_probability": 1,
+      "captured_at": 0,
+      "source": "synthetic test fixture",
+      "evidence": "synthetic"
+    },
+    {
+      "species": "child3",
+      "grade": 1,
+      "remaining_breeds": 0,
+      "net_proceeds": 2,
+      "sale_probability": 1,
+      "captured_at": 0,
+      "source": "synthetic test fixture",
+      "evidence": "synthetic"
+    },
+    {
+      "species": "child4",
+      "grade": 1,
+      "remaining_breeds": 0,
+      "net_proceeds": 20,
+      "sale_probability": 1,
+      "captured_at": 0,
+      "source": "synthetic test fixture",
+      "evidence": "synthetic"
+    },
+    {
+      "species": "child5",
+      "grade": 1,
+      "remaining_breeds": 0,
+      "net_proceeds": 100,
+      "sale_probability": 1,
+      "captured_at": 0,
+      "source": "synthetic test fixture",
+      "evidence": "synthetic"
+    }
+  ],
+  "scenario": "missing-outcome-model",
+  "data_notice": "SYNTHETIC INVENTORY, VALUES AND JOINT OUTCOMES; NOT LIVE GAME DATA"
+}

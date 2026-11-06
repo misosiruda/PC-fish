@@ -1,0 +1,224 @@
+{
+  "schema_version": 1,
+  "currency": "KRW",
+  "synthetic": true,
+  "state": {
+    "now": 0,
+    "hearts": 1,
+    "next_heart_at": 360,
+    "fish": [
+      {
+        "id": "material0",
+        "species": "material",
+        "level": 5,
+        "grade": 5,
+        "remaining_breeds": 0,
+        "ready_at": 0
+      },
+      {
+        "id": "material1",
+        "species": "material",
+        "level": 5,
+        "grade": 5,
+        "remaining_breeds": 0,
+        "ready_at": 0
+      },
+      {
+        "id": "material2",
+        "species": "material",
+        "level": 5,
+        "grade": 5,
+        "remaining_breeds": 0,
+        "ready_at": 0
+      },
+      {
+        "id": "material3",
+        "species": "material",
+        "level": 5,
+        "grade": 5,
+        "remaining_breeds": 0,
+        "ready_at": 0
+      },
+      {
+        "id": "material4",
+        "species": "material",
+        "level": 5,
+        "grade": 5,
+        "remaining_breeds": 0,
+        "ready_at": 0
+      },
+      {
+        "id": "material5",
+        "species": "material",
+        "level": 5,
+        "grade": 5,
+        "remaining_breeds": 0,
+        "ready_at": 0
+      },
+      {
+        "id": "material6",
+        "species": "material",
+        "level": 5,
+        "grade": 5,
+        "remaining_breeds": 0,
+        "ready_at": 0
+      },
+      {
+        "id": "material7",
+        "species": "material",
+        "level": 5,
+        "grade": 5,
+        "remaining_breeds": 0,
+        "ready_at": 0
+      },
+      {
+        "id": "material8",
+        "species": "material",
+        "level": 5,
+        "grade": 5,
+        "remaining_breeds": 0,
+        "ready_at": 0
+      },
+      {
+        "id": "material9",
+        "species": "material",
+        "level": 5,
+        "grade": 5,
+        "remaining_breeds": 0,
+        "ready_at": 0
+      }
+    ]
+  },
+  "config": {
+    "allow_assumptions": true,
+    "horizon_seconds": 300,
+    "max_actions": 1
+  },
+  "rules": [
+    {
+      "id": "merge-material",
+      "kind": "merge",
+      "parents": [
+        {
+          "id": "material0",
+          "species": "material",
+          "level": 5,
+          "grade": 5,
+          "remaining_breeds": 0,
+          "ready_at": 0
+        },
+        {
+          "id": "material1",
+          "species": "material",
+          "level": 5,
+          "grade": 5,
+          "remaining_breeds": 0,
+          "ready_at": 0
+        },
+        {
+          "id": "material2",
+          "species": "material",
+          "level": 5,
+          "grade": 5,
+          "remaining_breeds": 0,
+          "ready_at": 0
+        },
+        {
+          "id": "material3",
+          "species": "material",
+          "level": 5,
+          "grade": 5,
+          "remaining_breeds": 0,
+          "ready_at": 0
+        },
+        {
+          "id": "material4",
+          "species": "material",
+          "level": 5,
+          "grade": 5,
+          "remaining_breeds": 0,
+          "ready_at": 0
+        },
+        {
+          "id": "material5",
+          "species": "material",
+          "level": 5,
+          "grade": 5,
+          "remaining_breeds": 0,
+          "ready_at": 0
+        },
+        {
+          "id": "material6",
+          "species": "material",
+          "level": 5,
+          "grade": 5,
+          "remaining_breeds": 0,
+          "ready_at": 0
+        },
+        {
+          "id": "material7",
+          "species": "material",
+          "level": 5,
+          "grade": 5,
+          "remaining_breeds": 0,
+          "ready_at": 0
+        },
+        {
+          "id": "material8",
+          "species": "material",
+          "level": 5,
+          "grade": 5,
+          "remaining_breeds": 0,
+          "ready_at": 0
+        },
+        {
+          "id": "material9",
+          "species": "material",
+          "level": 5,
+          "grade": 5,
+          "remaining_breeds": 0,
+          "ready_at": 0
+        }
+      ],
+      "outcomes": [
+        {
+          "probability": 1,
+          "fish": {
+            "species": "merged",
+            "level": 5,
+            "grade": 5,
+            "remaining_breeds": 1,
+            "ready_after_seconds": 420
+          }
+        }
+      ],
+      "evidence": "synthetic",
+      "sample_count": 0,
+      "source": "synthetic test fixture"
+    }
+  ],
+  "quotes": [
+    {
+      "species": "material",
+      "grade": 5,
+      "remaining_breeds": 0,
+      "net_proceeds": 1000,
+      "sale_probability": 1,
+      "captured_at": 0,
+      "source": "synthetic test fixture",
+      "evidence": "synthetic"
+    },
+    {
+      "species": "merged",
+      "grade": 5,
+      "remaining_breeds": 1,
+      "net_proceeds": 1500,
+      "sale_probability": 1,
+      "captured_at": 0,
+      "source": "synthetic test fixture",
+      "evidence": "synthetic"
+    }
+  ],
+  "scenario": "preserve-high-value",
+  "data_notice": "SYNTHETIC INVENTORY, VALUES AND JOINT OUTCOMES; NOT LIVE GAME DATA"
+}

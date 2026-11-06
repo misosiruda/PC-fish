@@ -1,0 +1,35 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+build/
+dist/
+work/
+tools/
+bin/
+obj/
+var/
+
+# Local configuration, credentials, and caches
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+*.pfx
+*.p12
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.vs/
+
+# Game saves, runtime logs, and compiled binaries
+*.es3
+*.log
+*.dmp
+*.dll
+*.exe
+*.pdb

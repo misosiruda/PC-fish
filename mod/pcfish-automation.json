@@ -1,0 +1,14 @@
+{
+  "enabled": true,
+  "mode": "protected",
+  "auto_breed": true,
+  "auto_merge": true,
+  "auto_level_up": true,
+  "protect_grade_at_least": 3,
+  "reserved_ids": [],
+  "reserved_species": [],
+  "minimum_action_interval_seconds": 10,
+  "python_path": "C:\\Project\\PC-fish\\.venv\\Scripts\\python.exe",
+  "project_root": "C:\\Project\\PC-fish",
+  "economic_model_file": null
+}
