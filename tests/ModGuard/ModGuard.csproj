@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../mod/PCFish.Automation/ResponseBindings.cs" Link="ResponseBindings.cs" />
     <Compile Include="../../mod/PCFish.Automation/Contracts.cs" Link="Contracts.cs" />
     <Compile Include="../../mod/PCFish.Automation/MarketProtection.cs" Link="MarketProtection.cs" />
     <Compile Include="../../mod/PCFish.Automation/UnlistedMarketValue.cs" Link="UnlistedMarketValue.cs" />

@@ -178,6 +178,7 @@ public sealed partial class Plugin
                 server_restore_started_at = recovery.server_restore_started_at, server_restore_completed_at = recovery.server_restore_completed_at });
             var archive = Path.Combine(root, "resolved-pending"); Directory.CreateDirectory(archive);
             File.Move(Path.Combine(root, "pending.json"), Path.Combine(archive, recovery.cmd.request_id + ".json"));
+            SettleResponseBindings(recovery.cmd.request_id);
             ReleaseRequestUi(recovery.cmd.request_id, UnityEngine.Object.FindObjectOfType<UIManager>());
             recovery = null; receipt = null; receiptContinuation = null;
             inFlight = false; uncertain = false; pendingId = "";

@@ -250,6 +250,7 @@ public sealed partial class Plugin
             before_hearts = work.native_ui_hearts_before, after_hearts = work.native_hearts_after });
         var archive = Path.Combine(root, "resolved-pending"); Directory.CreateDirectory(archive);
         File.Move(Path.Combine(root, "pending.json"), Path.Combine(archive, work.cmd.request_id + ".json"));
+        SettleResponseBindings(work.cmd.request_id);
         NativeComparisonStage("native_order_server_confirmed", new { child_id = work.child_id, heart_debit_count = 1 });
         if (comparison)
         {

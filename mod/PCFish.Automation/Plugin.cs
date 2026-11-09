@@ -20,7 +20,7 @@ using UnityEngine;
 
 namespace PCFish.Automation;
 
-[BepInPlugin("local.pcfish.automation", "PC FISH Automation", "0.4.26")]
+[BepInPlugin("local.pcfish.automation", "PC FISH Automation", "0.4.27")]
 public sealed partial class Plugin : BasePlugin
 {
     internal static Plugin Current = null!;
@@ -53,7 +53,7 @@ public sealed partial class Plugin : BasePlugin
     Il2CppSystem.Action<bool> ignoredProbeCallback;
     Action<string[]> probeCompleted;
     bool probeWasProcessing, probeWasVisible, replayingReceipt;
-    readonly Dictionary<long, (Command command, Snapshot before, string account, Il2CppSystem.Object target)> responseBindings = new();
+    readonly ResponseBindings<NativeResponseBinding> responseBindings = new();
     readonly HashSet<string> observedChildReceipts = new(StringComparer.Ordinal);
     ReceiptCommit receipt;
     Action receiptContinuation;
@@ -138,7 +138,7 @@ public sealed partial class Plugin : BasePlugin
         }
     }
     void Status(string state, object extra = null) => Atomic(Path.Combine(root, "status.json"), new
-    { version = "0.4.26", session, captured_at = Now, state, message, in_flight = inFlight, uncertain, pending_id = pendingId,
+    { version = "0.4.27", session, captured_at = Now, state, message, in_flight = inFlight, uncertain, pending_id = pendingId,
         native_breed_retry = nativeBreedRetry,
         native_comparison = nativeComparison,
         native_breed_flow = NativeBreedRequest ? recovery.flow : "",
@@ -150,6 +150,8 @@ public sealed partial class Plugin : BasePlugin
         inventory_next_request_at = inventoryPacing.next_at, inventory_backoff_failures = inventoryPacing.failures,
         recovery_request_id = recovery?.cmd.request_id ?? "", recovery_note = recovery?.note ?? "",
         response_diagnostic_note = responseDiagnosticNote,
+        response_bindings_active = responseBindings.ActiveCount,
+        response_bindings_settled = responseBindings.Count - responseBindings.ActiveCount,
         http_diagnostic_note = httpDiagnosticNote,
         inventory_synced = inventorySynced, inventory_syncing = inventorySyncing, inventory_sync_note = inventorySyncNote,
         account_context_hash = bindingsValidated ? AccountContext() : "", inventory_account_context_hash = inventoryAccountContext,
@@ -164,6 +166,7 @@ public sealed partial class Plugin : BasePlugin
         nextTick = Now + 1;
         try
         {
+            responseBindings.PruneSettled();
             if (!File.Exists(configFile)) { message = "Configuration missing; paused"; Status("paused"); return; }
             var raw = ReadText(configFile);
             var cfg = JsonSerializer.Deserialize<Settings>(raw) ?? throw new InvalidDataException("Empty settings");
@@ -555,6 +558,7 @@ public sealed partial class Plugin : BasePlugin
                             Atomic(Path.Combine(rejectedEvents, cmd.request_id + ".json"), new { event_id = cmd.request_id,
                                 kind = cmd.kind, outcome = "rejected", consumed = false, completed_at = Now, cmd, before, after = rejected });
                             File.Delete(Path.Combine(root, "pending.json"));
+                            SettleResponseBindings(cmd.request_id);
                             ReleaseRequestUi(cmd.request_id, UnityEngine.Object.FindObjectOfType<UIManager>());
                             recovery = null;
                             inFlight = false; uncertain = false; pendingId = "";
@@ -596,6 +600,7 @@ public sealed partial class Plugin : BasePlugin
                             materials = parents.Select(f => f.Traits()), result = child.Traits(), before_hearts = before.hearts, after_hearts = after.hearts });
                     else Atomic(Path.Combine(root, "events", cmd.request_id + ".json"), record);
                     File.Delete(Path.Combine(root, "pending.json"));
+                    SettleResponseBindings(cmd.request_id);
                     recovery = null;
                     inFlight = false; uncertain = false; pendingId = ""; nextActionAt = Now + cfg.minimum_action_interval_seconds;
                     message = $"Confirmed {cmd.kind}; result Level {child.level}, Grade {child.grade}";
@@ -634,7 +639,9 @@ public sealed partial class Plugin : BasePlugin
         // Binding is part of the transaction contract, not optional logging.
         // Keep the native callback target rooted until its receipt is settled.
         var target = __2.Target ?? throw new InvalidDataException("Native response callback has no target");
-        p.responseBindings[target.Pointer.ToInt64()] = (p.dispatchedCommand, p.dispatchBefore, AccountContext(), target);
+        var lifetime = new NativeResponseLifetime(target.Pointer);
+        p.responseBindings.Register(target.Pointer.ToInt64(), p.dispatchedCommand.request_id,
+            new NativeResponseBinding(p.dispatchedCommand, p.dispatchBefore, AccountContext(), target), lifetime.Alive, lifetime.Release);
         try
         {
             var diagnostic = RequestWireContract.Inspect(p.dispatchedCommand, __1);
@@ -657,7 +664,9 @@ public sealed partial class Plugin : BasePlugin
     {
         var plugin = Current;
         if (plugin == null || plugin.replayingReceipt) return true;
-        if (__instance is not Il2CppObjectBase native || !plugin.responseBindings.TryGetValue(native.Pointer.ToInt64(), out var binding)) return true;
+        if (__instance is not Il2CppObjectBase native || !plugin.responseBindings.TryGet(native.Pointer.ToInt64(), out var entry)) return true;
+        if (entry.Settled) { plugin.ObserveSettledResponse(entry.RequestId, __0); return false; }
+        var binding = entry.Payload;
         try
         {
             var diagnostic = ResponseDiagnostics.Read(__0);
