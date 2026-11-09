@@ -12,9 +12,11 @@
     <Reference Include="$(GameRoot)\BepInEx\core\BepInEx.Core.dll" Private="false" />
     <Reference Include="$(GameRoot)\BepInEx\core\BepInEx.Unity.IL2CPP.dll" Private="false" />
     <Reference Include="$(GameRoot)\BepInEx\core\Il2CppInterop.Runtime.dll" Private="false" />
+    <Reference Include="$(GameRoot)\BepInEx\core\0Harmony.dll" Private="false" />
     <Reference Include="$(GameRoot)\BepInEx\interop\Assembly-CSharp.dll" Private="false" />
     <Reference Include="$(GameRoot)\BepInEx\interop\Assembly-CSharp-firstpass.dll" Private="false" />
     <Reference Include="$(GameRoot)\BepInEx\interop\Il2Cppmscorlib.dll" Private="false" />
     <Reference Include="$(GameRoot)\BepInEx\interop\UnityEngine.CoreModule.dll" Private="false" />
+    <Reference Include="$(GameRoot)\BepInEx\interop\UnityEngine.UnityWebRequestModule.dll" Private="false" />
   </ItemGroup>
 </Project>

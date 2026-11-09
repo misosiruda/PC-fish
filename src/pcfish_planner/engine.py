@@ -411,7 +411,7 @@ class Planner:
 
     def merge_eligible(self, fish: Fish) -> bool:
         return (fish.merge_allowed and not fish.protected_merge and not fish.reserved
-                and not fish.unlimited_breeding and fish.level > 0 and fish.remaining_breeds == 0
+                and not fish.unlimited_breeding and fish.level > 0
                 and fish.grade < self.c.protect_merge_grade_at_least
                 and (self.c.allow_seasonal_merge or not fish.seasonal))
 
@@ -537,7 +537,7 @@ class Planner:
             status = 'hold_missing_data'
         reason = {
             'breed': '현재 부모 가치 감소와 자식 가치를 포함한 계획 기대값이 대기·보존보다 높습니다.',
-            'merge': '고갈 재료 10마리의 기회비용을 차감한 계획 기대값이 대기·보존보다 높습니다.',
+            'merge': '재료 10마리의 남은 교배 횟수를 포함한 기회비용을 차감한 계획 기대값이 대기·보존보다 높습니다.',
             'wait': '다음 사건까지 기다린 뒤 가능한 행동의 계획 기대값이 지금 실행하는 행동보다 높습니다.',
             'hold': '양의 기대 이익을 확인한 행동이 없거나, 평가·상태 확인에 필요한 데이터가 부족합니다.',
         }[best.action.kind]

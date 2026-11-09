@@ -82,7 +82,12 @@ class WorkerIPCTests(unittest.TestCase):
             root = Path(d)
             cfg_path = root / 'config.json'
             atomic(cfg_path, {**CONFIG, 'mode': 'observe'})
-            s = snapshot([live_fish('a'), live_fish('b')])
+            s = snapshot([live_fish('a'), live_fish('b'), live_fish('c')]
+                         + [live_fish(f'm{i}', level=1, breeds=0) for i in range(10)])
+            s['hearts'] = 5
+            (root / 'rejected-events').mkdir()
+            atomic(root / 'rejected-events' / 'failed-pair.json', {'kind': 'breed', 'outcome': 'rejected',
+                   'consumed': False, 'completed_at': time.time(), 'cmd': {'fish_ids': ['a', 'b']}})
 
             def publish():
                 s['captured_at'] = time.time()
@@ -112,6 +117,8 @@ class WorkerIPCTests(unittest.TestCase):
                 self.assertEqual(command['revision'], s['revision'])
                 self.assertEqual(command['config_digest'], s['config_digest'])
                 self.assertEqual(command['kind'], 'breed')
+                self.assertNotEqual(set(command['fish_ids']), {'a', 'b'})
+                self.assertTrue(set(command['fish_ids']) <= {'a', 'b', 'c'})
                 self.assertLessEqual(command['expires_at'] - time.time(), 5)
                 atomic(root / 'pending.json', {'request_id': command['request_id']})
                 (root / 'command.json').unlink()

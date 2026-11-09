@@ -7,7 +7,8 @@ import unittest
 from unittest.mock import patch
 
 from pcfish_planner import browser_market
-from pcfish_planner.market import MarketMonitor, MarketUnavailable, fetch_quote, listing_url
+from pcfish_planner.market import MarketMonitor, MarketUnavailable, listing_url
+from pcfish_planner.browser_market import fetch_quote
 from test_bridge import snapshot
 from test_market import MARKET, NAME, NOW, fish, page
 
@@ -66,7 +67,7 @@ class BrowserMarketTests(unittest.TestCase):
         with patch.object(browser_market, '_selenium', return_value=(None, Wait, DriverError)), \
                 patch.object(browser_market, 'create_driver', return_value=driver), \
                 patch.object(browser_market.time, 'time', return_value=NOW):
-            return fetch_quote(NAME)  # Exercise the actual bridge default transport.
+            return fetch_quote(NAME)  # Legacy one-page transport remains read-only.
 
     def test_default_transport_reads_hydrated_data_and_closes_browser(self):
         driver = Driver(results=[{'blocked': False}, {'query_data': json.dumps({'queries': page()})}])
@@ -113,9 +114,10 @@ class BrowserMarketTests(unittest.TestCase):
 
     def test_driver_uses_isolated_headless_chrome(self):
         class Options:
-            def __init__(self): self.arguments = []; self.capabilities = {}
+            def __init__(self): self.arguments = []; self.capabilities = {}; self.experimental = {}
             def add_argument(self, argument): self.arguments.append(argument)
             def set_capability(self, key, value): self.capabilities[key] = value
+            def add_experimental_option(self, key, value): self.experimental[key] = value
         options = Options()
         captured = {}
         def chrome(**kwargs): captured.update(kwargs); return 'owned driver'
@@ -125,7 +127,21 @@ class BrowserMarketTests(unittest.TestCase):
             self.assertEqual(browser_market.create_driver(), 'owned driver')
         self.assertEqual(options.binary_location, 'installed-chrome')
         self.assertIn('--headless=new', options.arguments)
+        self.assertEqual(options.experimental['prefs']['profile.managed_default_content_settings.images'], 2)
         self.assertFalse(any('user-data-dir' in v or 'profile-directory' in v for v in options.arguments))
+
+    def test_nested_steam_api_rate_limit_is_global_and_honors_retry_after(self):
+        driver = Driver()
+        def logs(_):
+            return [{'message': json.dumps({'message': {'method': 'Network.responseReceived', 'params': {
+                'type': 'Fetch', 'response': {'url': 'https://api.steampowered.com/IMarketService/GetData/v1/',
+                                            'status': 429, 'headers': {'retry-after': '7200'}}}}})}]
+        driver.get_log = logs
+        with self.assertRaises(MarketUnavailable) as caught:
+            self.fetch(driver)
+        self.assertTrue(caught.exception.rate_limited)
+        self.assertEqual(caught.exception.retry_after_seconds, 7200)
+        self.assertTrue(driver.closed)
 
     def test_browser_failure_to_start_leaves_no_partial_quote(self):
         with patch.object(browser_market, '_selenium', return_value=(None, Wait, DriverError)), \
@@ -139,7 +155,7 @@ class BrowserMarketTests(unittest.TestCase):
                 patch.object(browser_market, '_selenium', return_value=(None, Wait, DriverError)), \
                 patch.object(browser_market, 'create_driver', return_value=driver) as create, \
                 patch.object(browser_market.time, 'time', return_value=NOW):
-            root = Path(directory); monitor = MarketMonitor(root)
+            root = Path(directory); monitor = MarketMonitor(root, fetch_quote)
             s = snapshot([fish()])
             try:
                 monitor.update(s, MARKET, NOW)
@@ -148,7 +164,7 @@ class BrowserMarketTests(unittest.TestCase):
                 self.assertEqual(report['fish'][0]['state'], 'keep')
                 stored = json.loads((root / 'market-cache.json').read_text(encoding='utf-8'))
                 self.assertEqual(stored['quotes'][NAME]['lookup_backend'], 'selenium_chrome')
-                restarted = MarketMonitor(root)
+                restarted = MarketMonitor(root, fetch_quote)
                 try:
                     s['fish'].append(fish('newborn'))
                     report = restarted.update(s, MARKET, NOW + 86399)
@@ -163,7 +179,7 @@ class BrowserMarketTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, \
                 patch.object(browser_market, '_selenium', return_value=(None, Wait, DriverError)), \
                 patch.object(browser_market, 'create_driver', return_value=driver):
-            root = Path(directory); monitor = MarketMonitor(root)
+            root = Path(directory); monitor = MarketMonitor(root, fetch_quote)
             s = snapshot([fish()])
             try:
                 monitor.update(s, MARKET, NOW)

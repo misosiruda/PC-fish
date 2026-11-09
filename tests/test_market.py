@@ -40,6 +40,109 @@ def html(queries):
 
 
 class MarketTests(unittest.TestCase):
+    def test_best_observed_state_uses_actual_remaining_breeds_without_requiring_full_capacity(self):
+        cfg = {**MARKET, 'market_merge_price_basis': 'best_observed_breeds'}
+        q = dict(market_hash_name=NAME, checked_at=NOW, currency_id=16, complete=False, trades_30d=0,
+                 samples=[dict(remaining_breeds=1, maximum_breeds=2, seller_proceeds_krw=900),
+                          dict(remaining_breeds=1, maximum_breeds=5, seller_proceeds_krw=1000),
+                          dict(remaining_breeds=0, maximum_breeds=5, seller_proceeds_krw=2000)])
+        q.update(book_complete=True, coverage_version=2, listing_total=3, listing_observed=3)
+        review = review_fish(fish(remaining_breeds=3, maximum_breeds=5), q, cfg, NOW)
+        self.assertEqual((review['best_observed_remaining_breeds'], review['best_observed_listings']), (1, 2))
+        self.assertEqual(review['best_observed_seller_proceeds_krw'], 1000)
+        self.assertEqual(review['full_breed_listings'], 0)
+        self.assertEqual(review['merge_state'], 'release')
+        self.assertEqual(review['state'], 'pending')
+        q['samples'][1]['seller_proceeds_krw'] = 1000.01
+        self.assertEqual(review_fish(fish(), q, cfg, NOW)['merge_state'], 'keep')
+
+    def test_best_observed_can_be_exhausted_but_never_missing_or_invalid(self):
+        cfg = {**MARKET, 'market_merge_price_basis': 'best_observed_breeds'}
+        q = dict(market_hash_name=NAME, checked_at=NOW, currency_id=16,
+                 samples=[dict(remaining_breeds=0, maximum_breeds=2, seller_proceeds_krw=10),
+                          dict(remaining_breeds=0, maximum_breeds=5, seller_proceeds_krw=20)])
+        q.update(book_complete=True, coverage_version=2, listing_total=2, listing_observed=2)
+        review = review_fish(fish(), q, cfg, NOW)
+        self.assertEqual((review['best_observed_remaining_breeds'], review['best_observed_seller_proceeds_krw'], review['merge_state']), (0, 20, 'release'))
+        for changed in (None, {**q, 'samples': []}, {**q, 'samples': [dict(remaining_breeds=6, maximum_breeds=5, seller_proceeds_krw=10)]},
+                        {**q, 'checked_at': NOW - 86400}, {**q, 'currency_id': 1}, {**q, 'market_hash_name': 'Other'}):
+            with self.subTest(quote=changed):
+                self.assertEqual(review_fish(fish(), changed, cfg, NOW)['merge_state'], 'pending')
+
+    def test_best_observed_merge_keeps_action_specific_locks_and_season_quota(self):
+        cfg = {**MARKET, 'market_merge_price_basis': 'best_observed_breeds'}
+        materials = [fish(str(i), remaining_breeds=3, market_state='pending', market_merge_state='release',
+                          market_merge_valid_until=NOW + 100) for i in range(10)]
+        s = snapshot(materials); s['captured_at'] = NOW
+        self.assertEqual(decide(s, cfg, NOW)['kind'], 'merge')
+        s['season'] = {'id': 2, 'plan': {'state': 'waiting', 'reason': 'Saving ingredients', 'reserved_ids': ['0'], 'next_craft': None}}
+        self.assertNotEqual(decide(s, {**cfg, 'auto_season_craft': True}, NOW)['kind'], 'merge')
+        for change in ({'locked': True}, {'market_merge_state': 'keep'}, {'market_merge_valid_until': NOW}):
+            changed = deepcopy(s); changed['fish'][0].update(change)
+            self.assertNotEqual(decide(changed, cfg, NOW)['kind'], 'merge')
+
+    def test_missing_item_description_is_distinct_from_network_or_schema_failure(self):
+        queries = page()[1:2]
+        queries[0]['state']['data']['pages'][0].update(total_count=0, listings=[], more=False)
+        with self.assertRaises(MarketUnavailable) as caught:
+            parse_page(html(queries), NAME, NOW)
+        self.assertEqual(caught.exception.reason_code, 'item_description_unavailable')
+        self.assertTrue(caught.exception.product_specific)
+        self.assertFalse(caught.exception.rate_limited)
+
+    def test_observation_coverage_does_not_claim_to_cover_unread_market_listings(self):
+        queries = page(1000, more=True)
+        queries[1]['state']['data']['pages'][0]['total_count'] = 3929
+        q = parse_page(html(queries), NAME, NOW)
+        self.assertEqual((q['listing_total'], q['listing_observed'], q['listing_has_more']), (3929, 1, True))
+        review = review_fish(fish(), q, {**MARKET, 'market_merge_price_basis': 'best_observed_breeds'}, NOW)
+        self.assertEqual(review['listing_total'], 3929)
+        self.assertEqual(review['best_observed_remaining_breeds'], 1)
+        self.assertEqual(review['merge_state'], 'pending')
+
+    def test_full_breed_value_can_release_surplus_without_exact_breed_matches_or_recent_sales(self):
+        q = dict(market_hash_name=NAME, checked_at=NOW, currency_id=16, complete=False, trades_30d=0,
+                 samples=[dict(remaining_breeds=5, maximum_breeds=5, seller_proceeds_krw=1000),
+                          dict(remaining_breeds=0, maximum_breeds=2, seller_proceeds_krw=20)])
+        f = fish(remaining_breeds=3, maximum_breeds=4)
+        review = review_fish(f, q, {**MARKET, 'market_merge_price_basis': 'full_breeds'}, NOW)
+        self.assertEqual(review['state'], 'pending')  # Breeding price rules stay separate.
+        self.assertEqual(review['merge_state'], 'release')
+        self.assertEqual(review['product_max_seller_proceeds_krw'], 1000)
+        self.assertEqual(review['full_breed_listings'], 1)
+        q['samples'][0]['seller_proceeds_krw'] = 1000.01
+        self.assertEqual(review_fish(f, q, MARKET, NOW)['merge_state'], 'keep')
+
+    def test_full_breed_merge_does_not_invent_potential_from_used_or_invalid_listings(self):
+        q = dict(market_hash_name=NAME, checked_at=NOW, currency_id=16, samples=[
+            dict(remaining_breeds=1, maximum_breeds=5, seller_proceeds_krw=10)])
+        self.assertEqual(review_fish(fish(), q, MARKET, NOW)['merge_state'], 'pending')
+        q['samples'].append(dict(remaining_breeds=5, maximum_breeds=5, seller_proceeds_krw=20))
+        q['samples'].append(dict(remaining_breeds=0, maximum_breeds=5, seller_proceeds_krw=2000))
+        self.assertEqual(review_fish(fish(), q, MARKET, NOW)['merge_state'], 'keep')
+        for change in ('stale', 'future', 'currency', 'identity'):
+            changed = deepcopy(q)
+            if change == 'stale': changed['checked_at'] = NOW - 86400
+            if change == 'future': changed['checked_at'] = NOW + 1
+            if change == 'currency': changed['currency_id'] = 1
+            if change == 'identity': changed['market_hash_name'] = 'Other Fish ★'
+            self.assertEqual(review_fish(fish(), changed, MARKET, NOW)['merge_state'], 'pending')
+
+    def test_full_breed_merge_policy_is_action_specific_and_preserves_season_quotas(self):
+        cfg = {**MARKET, 'market_merge_price_basis': 'full_breeds'}
+        materials = [fish(str(i), remaining_breeds=3, market_state='pending', market_merge_state='release',
+                          market_merge_valid_until=NOW + 100) for i in range(10)]
+        s = snapshot(materials)
+        s['captured_at'] = NOW
+        plan = decide(s, cfg, NOW)
+        self.assertEqual(plan['kind'], 'merge')
+        s.update(season={'id': 2, 'plan': {'state': 'waiting', 'reason': 'Saving ingredients', 'reserved_ids': ['0'], 'next_craft': None}})
+        self.assertNotEqual(decide(s, {**cfg, 'auto_season_craft': True}, NOW)['kind'], 'merge')
+        for change in ({'locked': True}, {'market_merge_state': 'keep'}, {'market_merge_valid_until': NOW}):
+            changed = deepcopy(s)
+            changed['fish'][0].update(change)
+            self.assertNotEqual(decide(changed, cfg, NOW)['kind'], 'merge')
+
     def test_real_money_fields_and_exact_threshold(self):
         q = parse_page(html(page()), NAME, NOW)
         self.assertEqual(q['samples'][0]['seller_proceeds_krw'], 1000)
@@ -239,16 +342,70 @@ class MarketTests(unittest.TestCase):
                 monitor.update(s, MARKET, NOW)
                 with self.assertRaises(MarketUnavailable): monitor.future.result(timeout=2)
                 report = monitor.update(s, MARKET, NOW + 1)
-                self.assertEqual(report['next_request_at'], NOW + 31)
+                self.assertEqual(report['next_request_at'], NOW + 121)
                 self.assertEqual(report['product_failures']['A ★★★']['retry_at'], NOW + 901)
                 other = MarketMonitor(root, fetch)
                 try:
-                    other.update(s, MARKET, NOW + 31)
+                    other.update(s, MARKET, NOW + 121)
                     other.future.result(timeout=2)
-                    other.update(s, MARKET, NOW + 32)
+                    other.update(s, MARKET, NOW + 122)
                     self.assertEqual(calls, ['A ★★★', 'B ★★★'])
-                    other.update(s, MARKET, NOW + 62)
+                    other.update(s, MARKET, NOW + 242)
                     self.assertIsNone(other.future)
                     self.assertEqual(calls, ['A ★★★', 'B ★★★'])
+                finally: other.close()
+            finally: monitor.close()
+
+    def test_pending_outcome_suspends_market_but_reuses_quotes_and_resumes(self):
+        calls = []
+        def fetch(name):
+            calls.append(name)
+            return parse_page(html(page()), name, NOW)
+        with tempfile.TemporaryDirectory() as directory:
+            monitor = MarketMonitor(Path(directory), fetch)
+            s = snapshot([fish()])
+            try:
+                for field in ('uncertain', 'request_in_flight'):
+                    s[field] = True
+                    report = monitor.update(s, MARKET, NOW)
+                    self.assertTrue(report['suspended_for_pending_result'])
+                    self.assertIsNone(monitor.future)
+                    s[field] = False
+                self.assertEqual(calls, [])
+                monitor.update(s, MARKET, NOW + 1)
+                monitor.future.result(timeout=2)
+                report = monitor.update(s, MARKET, NOW + 2)
+                self.assertEqual(calls, [NAME])
+                s['uncertain'] = True
+                report = monitor.update(s, MARKET, NOW + 3)
+                self.assertEqual(report['fish'][0]['state'], 'keep')
+                audit = list((Path(directory) / 'market-requests').glob('*.json'))
+                self.assertEqual(len(audit), 1)
+                self.assertEqual(json.loads(audit[0].read_text(encoding='utf-8'))['outcome'], 'success')
+            finally:
+                monitor.close()
+
+    def test_retry_after_and_repeated_rate_limit_survive_restart(self):
+        def fetch(name):
+            raise HTTPError('https://steamcommunity.com', 429, 'Too Many Requests', {'Retry-After': '7200'}, None)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            monitor = MarketMonitor(root, fetch)
+            s = snapshot([fish()])
+            try:
+                monitor.update(s, MARKET, NOW)
+                with self.assertRaises(HTTPError): monitor.future.result(timeout=2)
+                report = monitor.update(s, MARKET, NOW + 1)
+                self.assertEqual(report['next_request_at'], NOW + 7201)
+                other = MarketMonitor(root, fetch)
+                try:
+                    self.assertEqual(other.rate_limit_failures, 1)
+                    other.update(s, MARKET, NOW + 7200)
+                    self.assertIsNone(other.future)
+                    other.update(s, MARKET, NOW + 7201)
+                    with self.assertRaises(HTTPError): other.future.result(timeout=2)
+                    report = other.update(s, MARKET, NOW + 7202)
+                    self.assertEqual(other.rate_limit_failures, 2)
+                    self.assertEqual(report['next_request_at'], NOW + 14402)
                 finally: other.close()
             finally: monitor.close()
