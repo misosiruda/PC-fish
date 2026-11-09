@@ -1,6 +1,11 @@
 using PCFish.Automation;
 
 int checkedCases = 0;
+ResponseBindingTests.Run((pass, scenario) => { if (!pass) throw new Exception(scenario); checkedCases++; });
+SellingStateTests.Run((pass, scenario) => { if (!pass) throw new Exception(scenario); checkedCases++; });
+UnlistedMarketTests.Run((pass, scenario) => { if (!pass) throw new Exception(scenario); checkedCases++; });
+NativeComparisonTests.Run((pass, scenario) => { if (!pass) throw new Exception(scenario); checkedCases++; });
+NativeServerRestoreTests.Run((pass, scenario) => { if (!pass) throw new Exception(scenario); checkedCases++; });
 Settings Settings() => new() { enabled = true, mode = "protected" };
 FishState Fish(string id) => new() { id = id, species = "ordinary", level = 1, grade = 1, remaining_breeds = 1, ready = true };
 Snapshot Snapshot() => new() { hearts = 1, capacity = 999, fish = [Fish("a"), Fish("b")] };
@@ -46,7 +51,8 @@ foreach (var f in materials) f.remaining_breeds = 0;
 var merge = new Command { request_id = Guid.NewGuid().ToString(), kind = "merge", fish_ids = materials.Select(f => f.id).ToArray() };
 var full = new Snapshot { hearts = 0, capacity = 10, fish = materials };
 ExecutionGuard.Validate(merge, full, Settings()); checkedCases++;
-Reject(() => materials[0].remaining_breeds = 1, merge, full, Settings());
+materials[0].remaining_breeds = 3;
+ExecutionGuard.Validate(merge, full, Settings()); checkedCases++;
 materials[0].remaining_breeds = 0;
 Reject(() => materials[0].basic = true, merge, full, Settings());
 
@@ -87,14 +93,8 @@ pop.confirmation_open = true;
 Check(!LevelUpGuard.CanHandle(Settings(), pop), "never dismiss unrelated confirmation");
 var exactXp = LevelState(); exactXp.tank_exp = exactXp.next_level_exp;
 Check(LevelUpGuard.CanUpgrade(Settings(), exactXp), "exact cumulative XP threshold");
-LevelUpGuard.Confirm(2, 150, 50, 3, 150); checkedCases++;
-foreach (var bad in new[] { (After: 2, Exp: 150), (After: 4, Exp: 150), (After: 3, Exp: 50) })
-{
-    bool rejected = false;
-    try { LevelUpGuard.Confirm(2, 150, 50, bad.After, bad.Exp); }
-    catch (InvalidDataException) { rejected = true; }
-    Check(rejected, "detect skipped/duplicate/XP-changing level result");
-}
+Check(LevelUpGuard.Confirm(new() { tank_level = 2, tank_exp = 150 }, new() { tank_level = 3, tank_exp = 170 }),
+    "level progress succeeds independently of XP predictions");
 var atMax = LevelState(); atMax.tank_level = atMax.max_tank_level;
 Check(!LevelUpGuard.CanUpgrade(Settings(), atMax), "no repeated upgrade at cap");
 
@@ -229,4 +229,15 @@ foreach(var age in new[] { 3601, 43200, 86399 })
 }
 MarketProtection.Apply(cachedFish, cachedReport, marketCfg, "test", "config", 87400);
 Check(cachedFish.market_state == "pending", "24-hour boundary requires refreshed evidence");
+SeasonTests.Run(Check);
+LevelRewardTests.Run(Check);
+FullBreedMarketTests.Run(Check);
+RequestOutcomeTests.Run(Check);
+ResponseDiagnosticTests.Run(Check);
+RequestWireTests.Run(Check);
+InventorySyncTests.Run(Check);
+ReceiptCommitTests.Run(Check);
+NetworkRecoveryTests.Run(Check);
+DeferredReceiptTests.Run(Check);
+NetworkUiLeaseTests.Run(Check);
 Console.WriteLine($"PASS {checkedCases} native execution guard cases");

@@ -8,7 +8,7 @@ import shutil
 import time
 from urllib.parse import unquote, urlsplit
 
-from .market import MarketUnavailable, listing_url, parse_query_data
+from .market import MarketUnavailable, listing_url, parse_query_data, retry_delay
 
 MAX_QUERY_BYTES = 8_000_000
 
@@ -52,6 +52,7 @@ def create_driver():
     options = webdriver.ChromeOptions()
     options.binary_location = chrome_binary()
     options.page_load_strategy = 'eager'
+    options.add_experimental_option('prefs', {'profile.managed_default_content_settings.images': 2})
     for argument in ('--headless=new', '--no-first-run', '--no-default-browser-check', '--disable-background-networking'):
         options.add_argument(argument)
     options.set_capability('goog:loggingPrefs', {'performance': 'ALL'})
@@ -70,17 +71,20 @@ def _check_document_responses(driver, url):
         try:
             message = json.loads(entry['message'])['message']
             params = message.get('params', {})
-            if message['method'] != 'Network.responseReceived' or params.get('type') != 'Document':
+            if message['method'] != 'Network.responseReceived':
                 continue
             response = params['response']
-            if not _same_product(response['url'], url):
-                continue
             status = response['status']
+            host = urlsplit(response['url']).hostname or ''
+            steam = host in ('steamcommunity.com', 'steampowered.com') or host.endswith(('.steamcommunity.com', '.steampowered.com'))
+            document = params.get('type') == 'Document' and _same_product(response['url'], url)
+            driver._pcfish_http_responses = getattr(driver, '_pcfish_http_responses', 0) + 1
         except (KeyError, TypeError, ValueError):
             continue
-        if status in (403, 429):
-            raise MarketUnavailable(f'Steam browser lookup limited (HTTP {int(status)})', retry_after_seconds=3600)
-        if status >= 400:
+        if steam and status in (403, 429):
+            raise MarketUnavailable(f'Steam browser lookup limited (HTTP {int(status)})',
+                                    retry_after_seconds=retry_delay(response.get('headers'), time.time()), rate_limited=True)
+        if document and status >= 400:
             raise MarketUnavailable(f'Steam browser lookup failed (HTTP {int(status)})', product_specific=status == 404)
 
 
@@ -98,7 +102,7 @@ def read_query_data(driver, url, wait_factory):
                 raise MarketUnavailable('Steam market response too large')
             return data
         if result.get('blocked'):
-            raise MarketUnavailable('Steam browser lookup requires manual verification', retry_after_seconds=3600)
+            raise MarketUnavailable('Steam browser lookup requires manual verification', retry_after_seconds=3600, rate_limited=True)
         return False
     return wait_factory(driver, 30, poll_frequency=.5).until(read)
 
@@ -114,7 +118,11 @@ def fetch_quote(name):
         query_data = read_query_data(driver, url, wait_factory)
         quote = parse_query_data(query_data, name, time.time())
         quote['lookup_backend'] = 'selenium_chrome'
+        quote['http_responses_observed'] = getattr(driver, '_pcfish_http_responses', 0)
         return quote
+    except MarketUnavailable as exc:
+        exc.http_responses_observed = getattr(driver, '_pcfish_http_responses', 0)
+        raise
     except webdriver_error as exc:
         # Browser exceptions may contain local paths and driver details. Keep
         # the public worker status concise and free of raw browser payloads.

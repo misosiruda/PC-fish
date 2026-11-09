@@ -6,7 +6,18 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../mod/PCFish.Automation/ResponseBindings.cs" Link="ResponseBindings.cs" />
     <Compile Include="../../mod/PCFish.Automation/Contracts.cs" Link="Contracts.cs" />
     <Compile Include="../../mod/PCFish.Automation/MarketProtection.cs" Link="MarketProtection.cs" />
+    <Compile Include="../../mod/PCFish.Automation/UnlistedMarketValue.cs" Link="UnlistedMarketValue.cs" />
+    <Compile Include="../../mod/PCFish.Automation/SellingStateProof.cs" Link="SellingStateProof.cs" />
+    <Compile Include="../../mod/PCFish.Automation/SeasonCrafting.cs" Link="SeasonCrafting.cs" />
+    <Compile Include="../../mod/PCFish.Automation/ResponseDiagnostics.cs" Link="ResponseDiagnostics.cs" />
+    <Compile Include="../../mod/PCFish.Automation/RequestWireContract.cs" Link="RequestWireContract.cs" />
+    <Compile Include="../../mod/PCFish.Automation/InventorySync.cs" Link="InventorySync.cs" />
+    <Compile Include="../../mod/PCFish.Automation/ReceiptCommit.cs" Link="ReceiptCommit.cs" />
+    <Compile Include="../../mod/PCFish.Automation/NetworkRecovery.cs" Link="NetworkRecovery.cs" />
+    <Compile Include="../../mod/PCFish.Automation/NativeComparison.cs" Link="NativeComparison.cs" />
+    <Compile Include="../../mod/PCFish.Automation/NativeServerRestore.cs" Link="NativeServerRestore.cs" />
   </ItemGroup>
 </Project>

@@ -56,11 +56,22 @@ class PlanningTests(unittest.TestCase):
         self.assertEqual(plan['action']['kind'], 'hold')
         self.assertEqual(plan['alternatives'][0]['immediate_gain'], -8500)
 
-    def test_cooldown_is_not_exhaustion(self):
+    def test_changed_remaining_breeds_still_require_matching_outcome_model(self):
         data = merge_example()
         data['state']['fish'][0]['remaining_breeds'] = 1
         data['state']['fish'][0]['ready_at'] = 200
         self.assertNotEqual(self.run_plan(data)['action']['kind'], 'merge')
+
+    def test_nonexhausted_materials_can_merge_with_correct_model_and_opportunity_cost(self):
+        data = merge_example()
+        for f in data['state']['fish']:
+            f.update(remaining_breeds=3, ready_at=200)
+        for f in data['rules'][0]['parents']:
+            f['remaining_breeds'] = 3
+        data['quotes'][0]['remaining_breeds'] = 3
+        plan = self.run_plan(data)
+        self.assertEqual(plan['action']['kind'], 'merge')
+        self.assertEqual(plan['expected_inventory_value_gain'], 30)
 
     def test_locked_for_merge_does_not_block_breeding(self):
         data = wait_example()

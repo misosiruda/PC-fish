@@ -2,12 +2,36 @@ param(
     [ValidateSet('Protected','Economic','Observe','Pause','Status')][string]$Mode='Status',
     [ValidateSet('Grade','Market')][string]$Protection,
     [ValidateRange(1,100000000)][double]$MarketMinimumKrw=1000,
+    [ValidateSet('ExactBreeds','FullBreeds','BestObservedBreeds')][string]$MergePriceBasis,
+    [ValidateSet('On','Off')][string]$SeasonCrafting,
+    [ValidateSet('Highest','Collection','Repeat')][string]$SeasonGoal,
+    [ValidateRange(1,5)][int]$SeasonTargetGrade=5,
+    [ValidateRange(1,10)][int]$SeasonTargetCount=1,
     [string]$GameRoot='C:\Program Files (x86)\Steam\steamapps\common\PC FISH'
 )
 $ErrorActionPreference='Stop'
 $fishTaskConfig=Join-Path $GameRoot 'BepInEx\config\pcfish-automation.json'
 $fishTaskRuntime=Join-Path $GameRoot 'BepInEx\PCFishAutomation'
-if($Mode -ne 'Status' -or $Protection){
+if($Mode -ne 'Status' -or $Protection -or $SeasonCrafting -or $SeasonGoal -or $MergePriceBasis){
+    if($MergePriceBasis -in @('FullBreeds','BestObservedBreeds')){
+        $fishTaskMinimumMergeVersion=if($MergePriceBasis -eq 'BestObservedBreeds'){[version]'0.4.17'}else{[version]'0.4.4'}
+        $fishTaskStatusPath=Join-Path $fishTaskRuntime 'status.json'
+        if(Test-Path -LiteralPath $fishTaskStatusPath){
+            $fishTaskLiveStatus=Get-Content -LiteralPath $fishTaskStatusPath -Raw | ConvertFrom-Json
+            if((Get-Process -Name PCFish -ErrorAction SilentlyContinue) -and [version]$fishTaskLiveStatus.version -lt $fishTaskMinimumMergeVersion){
+                throw "$MergePriceBasis merge pricing requires mod $fishTaskMinimumMergeVersion or newer. Install the updated plugin before enabling."
+            }
+        }
+    }
+    if($SeasonCrafting -eq 'On' -or $SeasonGoal){
+        $fishTaskStatusPath=Join-Path $fishTaskRuntime 'status.json'
+        if(Test-Path -LiteralPath $fishTaskStatusPath){
+            $fishTaskLiveStatus=Get-Content -LiteralPath $fishTaskStatusPath -Raw | ConvertFrom-Json
+            if((Get-Process -Name PCFish -ErrorAction SilentlyContinue) -and [version]$fishTaskLiveStatus.version -lt [version]'0.4.0'){
+                throw 'Season crafting requires mod 0.4.0 or newer. Close the game, install the new plugin, and restart before enabling.'
+            }
+        }
+    }
     if($Protection -eq 'Market'){
         $fishTaskStatusPath=Join-Path $fishTaskRuntime 'status.json'
         if(Test-Path -LiteralPath $fishTaskStatusPath){
@@ -30,8 +54,18 @@ if($Mode -ne 'Status' -or $Protection){
         if($Protection -eq 'Market'){
             $fishTaskSettings | Add-Member -NotePropertyName market_min_seller_proceeds_krw -NotePropertyValue $MarketMinimumKrw -Force
             $fishTaskSettings | Add-Member -NotePropertyName market_quote_ttl_seconds -NotePropertyValue 86400 -Force
-            $fishTaskSettings | Add-Member -NotePropertyName market_request_interval_seconds -NotePropertyValue 30 -Force
+            $fishTaskSettings | Add-Member -NotePropertyName market_request_interval_seconds -NotePropertyValue 120 -Force
         }
+    }
+    if($SeasonCrafting){$fishTaskSettings | Add-Member -NotePropertyName auto_season_craft -NotePropertyValue ($SeasonCrafting -eq 'On') -Force}
+    if($MergePriceBasis){
+        $fishTaskMergeBasis=switch($MergePriceBasis){'FullBreeds'{'full_breeds'} 'BestObservedBreeds'{'best_observed_breeds'} default{'exact_breeds'}}
+        $fishTaskSettings | Add-Member -NotePropertyName market_merge_price_basis -NotePropertyValue $fishTaskMergeBasis -Force
+    }
+    if($SeasonGoal){
+        $fishTaskSettings | Add-Member -NotePropertyName season_goal -NotePropertyValue $SeasonGoal.ToLowerInvariant() -Force
+        $fishTaskSettings | Add-Member -NotePropertyName season_target_grade -NotePropertyValue $SeasonTargetGrade -Force
+        $fishTaskSettings | Add-Member -NotePropertyName season_target_count -NotePropertyValue $SeasonTargetCount -Force
     }
     $fishTaskTemp=$fishTaskConfig+'.tmp'
     [IO.File]::WriteAllText($fishTaskTemp,($fishTaskSettings | ConvertTo-Json -Depth 10),[Text.UTF8Encoding]::new($false))
@@ -43,7 +77,7 @@ if($Mode -ne 'Status' -or $Protection){
     Write-Output "Automation mode: $Mode; protection: $($fishTaskSettings.protection_mode) (hot reload within 1 second)."
     return
 }
-foreach($fishTaskName in @('status.json','worker-status.json','recommendation.json','market-review.json')){
+foreach($fishTaskName in @('status.json','worker-status.json','recommendation.json','market-review.json','season-review.json')){
     $fishTaskFile=Join-Path $fishTaskRuntime $fishTaskName
     if(Test-Path -LiteralPath $fishTaskFile){Write-Output "$fishTaskName"; Get-Content -LiteralPath $fishTaskFile -Raw}
 }
