@@ -21,6 +21,7 @@ from .engine import Planner, Problem, ValidationError
 from .learning import learn_rules
 from .probabilities import breed_level_probabilities, merge_level_probabilities
 from .market import MarketMonitor, market_settings
+from .merge_policy import merge_batch_allowed
 
 
 def atomic(path: Path, value: dict) -> None:
@@ -123,7 +124,7 @@ def recent_unpersisted_breed_pairs(runtime: Path, now: float) -> list[list[str]]
 def protected(fish: dict, config: dict, now: float | None = None, *, action: str = 'breed') -> bool:
     market_mode = market_settings(config)[0] == 'market'
     now = time.time() if now is None else now
-    product_value = action == 'merge' and config.get('market_merge_price_basis') in ('full_breeds', 'best_observed_breeds')
+    product_value = action == 'merge' and config.get('market_merge_price_basis') in ('full_breeds', 'best_observed_breeds', 'highest_buy_order')
     state = fish.get('market_merge_state' if product_value else 'market_state')
     valid_until = fish.get('market_merge_valid_until' if product_value else 'market_valid_until', 0)
     price_protected = (not fish['basic'] and (state != 'release'
@@ -192,13 +193,21 @@ def _protected_merge_plan(s: dict, config: dict) -> dict | None:
                     if frozenset(f['id'] for f in ordered[i:i + 10]) not in rejected]
 
         batches = [batch for group in groups.values() for batch in batches_for(group)]
-        if not batches and len(materials) >= 10:
-            batches = batches_for(materials)
+        if not batches:
+            seen = set()
+            for grade in {f['grade'] for f in materials}:
+                for lower in range(1, 5):
+                    adjacent = [f for f in materials if f['grade'] == grade and lower <= f['level'] <= lower + 1]
+                    for batch in batches_for(adjacent):
+                        ids = frozenset(f['id'] for f in batch)
+                        if ids not in seen and merge_batch_allowed([f['level'] for f in batch], [f['grade'] for f in batch]):
+                            batches.append(batch)
+                            seen.add(ids)
         if batches:
             batch = max(batches, key=lambda b: (-max((len(set(f['id'] for f in b) & ids) for ids in rejected), default=0),
                         sum(f['level'] for f in b), -sum(f['remaining_breeds'] for f in b), -sum(f['grade'] for f in b)))
             return {'kind': 'merge', 'fish_ids': [f['id'] for f in batch],
-                    'reason': 'Surplus ordinary fish batch; fewer remaining breeds first, preservation policy/season/locks excluded',
+                    'reason': 'Ten same-star ordinary fish; rarity span at most one, forecast never below highest material; same-rarity batches preferred',
                     'forecast_levels': merge_level_probabilities([f['level'] for f in batch]),
                     'objective': 'protected_rarity_progress', 'profit_estimate': None}
     return None
@@ -323,11 +332,6 @@ def decide(s: dict, config: dict, now: float) -> dict:
         return {'kind': 'hold', 'reason': s.get('ui_block_reason') or 'Waiting for actual game UI interaction'}
     if config.get('mode') not in ('protected', 'economic'):
         raise ValidationError('Unknown live mode')
-    if config.get('mode') == 'protected' and s.get('breed_retry_after_server_restore', False):
-        retry = _protected_breed_plan(s, config)
-        if retry['kind'] == 'breed':
-            retry['reason'] = 'Native server-data restoration completed; perform a new guarded breeding request'
-            return retry
     season_details = None
     if config.get('auto_season_craft', False):
         season = s.get('season')
@@ -350,6 +354,13 @@ def decide(s: dict, config: dict, now: float) -> dict:
             return {'kind': 'craft', 'fish_ids': craft['fish_ids'], 'season': craft['season'],
                     'target_species': craft['species'], 'target_grade': craft['grade'],
                     'reason': season_details['reason'], 'season_details': season_details}
+    if config.get('mode') == 'protected' and s.get('breed_retry_after_server_restore', False):
+        retry = _protected_breed_plan(s, config)
+        if retry['kind'] == 'breed':
+            retry['reason'] = 'Native server-data restoration completed; perform a new guarded breeding request'
+            if season_details is not None:
+                retry['season_details'] = season_details
+            return retry
     if config.get('mode') == 'protected':
         plan = protected_plan(s, config)
     elif config.get('mode') == 'economic':

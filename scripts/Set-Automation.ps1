@@ -2,7 +2,7 @@ param(
     [ValidateSet('Protected','Economic','Observe','Pause','Status')][string]$Mode='Status',
     [ValidateSet('Grade','Market')][string]$Protection,
     [ValidateRange(1,100000000)][double]$MarketMinimumKrw=1000,
-    [ValidateSet('ExactBreeds','FullBreeds','BestObservedBreeds')][string]$MergePriceBasis,
+    [ValidateSet('ExactBreeds','FullBreeds','BestObservedBreeds','HighestBuyOrder')][string]$MergePriceBasis,
     [ValidateSet('On','Off')][string]$SeasonCrafting,
     [ValidateSet('Highest','Collection','Repeat')][string]$SeasonGoal,
     [ValidateRange(1,5)][int]$SeasonTargetGrade=5,
@@ -13,8 +13,8 @@ $ErrorActionPreference='Stop'
 $fishTaskConfig=Join-Path $GameRoot 'BepInEx\config\pcfish-automation.json'
 $fishTaskRuntime=Join-Path $GameRoot 'BepInEx\PCFishAutomation'
 if($Mode -ne 'Status' -or $Protection -or $SeasonCrafting -or $SeasonGoal -or $MergePriceBasis){
-    if($MergePriceBasis -in @('FullBreeds','BestObservedBreeds')){
-        $fishTaskMinimumMergeVersion=if($MergePriceBasis -eq 'BestObservedBreeds'){[version]'0.4.17'}else{[version]'0.4.4'}
+    if($MergePriceBasis -in @('FullBreeds','BestObservedBreeds','HighestBuyOrder')){
+        $fishTaskMinimumMergeVersion=if($MergePriceBasis -eq 'HighestBuyOrder'){[version]'0.4.29'}elseif($MergePriceBasis -eq 'BestObservedBreeds'){[version]'0.4.17'}else{[version]'0.4.4'}
         $fishTaskStatusPath=Join-Path $fishTaskRuntime 'status.json'
         if(Test-Path -LiteralPath $fishTaskStatusPath){
             $fishTaskLiveStatus=Get-Content -LiteralPath $fishTaskStatusPath -Raw | ConvertFrom-Json
@@ -59,7 +59,7 @@ if($Mode -ne 'Status' -or $Protection -or $SeasonCrafting -or $SeasonGoal -or $M
     }
     if($SeasonCrafting){$fishTaskSettings | Add-Member -NotePropertyName auto_season_craft -NotePropertyValue ($SeasonCrafting -eq 'On') -Force}
     if($MergePriceBasis){
-        $fishTaskMergeBasis=switch($MergePriceBasis){'FullBreeds'{'full_breeds'} 'BestObservedBreeds'{'best_observed_breeds'} default{'exact_breeds'}}
+        $fishTaskMergeBasis=switch($MergePriceBasis){'FullBreeds'{'full_breeds'} 'BestObservedBreeds'{'best_observed_breeds'} 'HighestBuyOrder'{'highest_buy_order'} default{'exact_breeds'}}
         $fishTaskSettings | Add-Member -NotePropertyName market_merge_price_basis -NotePropertyValue $fishTaskMergeBasis -Force
     }
     if($SeasonGoal){

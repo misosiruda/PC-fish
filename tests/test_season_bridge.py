@@ -85,6 +85,18 @@ class SeasonBridgeTests(unittest.TestCase):
             self.assertEqual(economic.call_args.args[1]['reserved_ids'], ['manual'])
             self.assertEqual(economic.call_args.args[1]['_season_reserved_ids'], ['a'])
 
+    def test_focused_craft_precedes_post_restore_breeding_retry(self):
+        s=self.state()
+        s['breed_retry_after_server_restore']=True
+        s['season']['plan'].update(state='ready',focus_species='FS00040',
+            next_craft={'season':2,'species':'FS00040','grade':1,'fish_ids':['a']})
+        cfg={**CONFIG,'auto_season_craft':True}
+        self.assertEqual(decide(s,cfg,0)['kind'],'craft')
+        s['season']['plan'].update(state='waiting',next_craft=None)
+        plan=decide(s,cfg,0)
+        self.assertEqual(plan['kind'],'breed')
+        self.assertEqual(plan['season_details']['focus_species'],'FS00040')
+
     def test_economic_engine_can_breed_reserved_material_but_cannot_merge_it(self):
         # The fixture is isolated test data; no live model file is written.
         parents = [fish('a'), fish('b')]

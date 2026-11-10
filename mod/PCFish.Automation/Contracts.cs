@@ -31,10 +31,24 @@ internal static class ExecutionGuard
         else if (cmd.kind == "merge")
         {
             if (!c.auto_merge || selected.Length != 10 || selected.Any(f => f.basic || f.level < 1)) throw new InvalidDataException("Merge conditions changed");
+            if (!MergePolicy.Allows(selected))
+                throw new InvalidDataException("Merge requires same stars, adjacent rarities and no downgrade risk");
         }
         else throw new InvalidDataException("Unsupported action");
     }
 
+}
+
+internal static class MergePolicy
+{
+    internal static bool Allows(FishState[] selected)
+    {
+        if (selected.Length != 10 || selected.Any(f => f.level is < 1 or > 5 || f.grade is < 1 or > 5)) return false;
+        var highest = selected.Max(f => f.level);
+        var lowest = selected.Min(f => f.level);
+        var minimumForecast = Math.Min(5, selected.Sum(f => f.level) / 10 + 1);
+        return selected.All(f => f.grade == selected[0].grade) && highest - lowest <= 1 && minimumForecast >= highest;
+    }
 }
 
 internal sealed class TankIndicatorSynchronizer
@@ -174,10 +188,11 @@ internal sealed class Settings
     public string season_goal { get; set; } = "highest";
     public int season_target_grade { get; set; } = 5;
     public int season_target_count { get; set; } = 1;
+    public string[] season_species_priority { get; set; } = ["FS00040", "FS00039", "FS00038"];
     public int protect_grade_at_least { get; set; } = 3;
     public string protection_mode { get; set; } = "grade";
     public string market_merge_price_basis { get; set; } = "exact_breeds";
-    internal bool UsesProductMergeValue => market_merge_price_basis is "full_breeds" or "best_observed_breeds";
+    internal bool UsesProductMergeValue => market_merge_price_basis is "full_breeds" or "best_observed_breeds" or "highest_buy_order";
     public double market_min_seller_proceeds_krw { get; set; } = 1000;
     public double market_quote_ttl_seconds { get; set; } = 86400;
     public double market_request_interval_seconds { get; set; } = 120;
@@ -190,7 +205,9 @@ internal sealed class Settings
     {
         if (mode is not ("observe" or "protected" or "economic") || protect_grade_at_least is < 2 or > 5 || !double.IsFinite(minimum_action_interval_seconds) || minimum_action_interval_seconds < 5 || reserved_ids == null || reserved_species == null
             || season_goal is not ("highest" or "collection" or "repeat") || season_target_grade is < 1 or > 5 || season_target_count is < 1 or > 10
-            || protection_mode is not ("grade" or "market") || market_merge_price_basis is not ("exact_breeds" or "full_breeds" or "best_observed_breeds")
+            || season_species_priority == null || season_species_priority.Length > 100
+            || season_species_priority.Any(string.IsNullOrWhiteSpace) || season_species_priority.Distinct().Count() != season_species_priority.Length
+            || protection_mode is not ("grade" or "market") || market_merge_price_basis is not ("exact_breeds" or "full_breeds" or "best_observed_breeds" or "highest_buy_order")
             || !double.IsFinite(market_min_seller_proceeds_krw) || market_min_seller_proceeds_krw <= 0
             || !double.IsFinite(market_quote_ttl_seconds) || market_quote_ttl_seconds is < 60 or > 86400
             || !double.IsFinite(market_request_interval_seconds) || market_request_interval_seconds is < 30 or > 3600)
@@ -213,6 +230,8 @@ internal sealed class FishState
     public double market_merge_valid_until { get; set; }
     public double? market_best_seller_proceeds_krw { get; set; }
     public double? market_seller_proceeds_krw { get; set; }
+    public double? market_highest_buy_order_krw { get; set; }
+    public long market_buy_order_count { get; set; }
     public string market_value_source { get; set; } = "unavailable";
     public double? market_estimated_seller_proceeds_krw { get; set; }
     public int market_estimate_peer_count { get; set; }

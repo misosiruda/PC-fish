@@ -1,6 +1,9 @@
 using PCFish.Automation;
 
 int checkedCases = 0;
+SameGroupMergeTests.Run((pass, scenario) => { if (!pass) throw new Exception(scenario); checkedCases++; });
+BuyOrderTests.Run((pass, scenario) => { if (!pass) throw new Exception(scenario); checkedCases++; });
+SeasonPriorityTests.Run((pass, scenario) => { if (!pass) throw new Exception(scenario); checkedCases++; });
 ResponseBindingTests.Run((pass, scenario) => { if (!pass) throw new Exception(scenario); checkedCases++; });
 SellingStateTests.Run((pass, scenario) => { if (!pass) throw new Exception(scenario); checkedCases++; });
 UnlistedMarketTests.Run((pass, scenario) => { if (!pass) throw new Exception(scenario); checkedCases++; });

@@ -186,6 +186,59 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(plan['kind'], 'merge')
         self.assertEqual(set(plan['fish_ids']), {f['id'] for f in low})
 
+    def test_merge_never_fills_short_group_with_distant_rarity_or_other_grade(self):
+        for change in ({'level': 3}, {'grade': 2}, {'level': 4, 'grade': 2}):
+            with self.subTest(change=change):
+                fish = [live_fish(f'm{i}', level=1, breeds=0) for i in range(9)]
+                fish.append(live_fish('different', breeds=0, **({'level': 1} | change)))
+                self.assertEqual(decide(snapshot(fish), {**CONFIG, 'auto_breed': False}, 0)['kind'], 'hold')
+
+    def test_adjacent_rarities_with_same_stars_can_fill_ten(self):
+        fish = [live_fish(f'low{i}', level=1, breeds=0) for i in range(9)]
+        fish += [live_fish('higher', level=2, breeds=0), live_fish('too-high', level=3, breeds=0)]
+        plan = decide(snapshot(fish), {**CONFIG, 'auto_breed': False}, 0)
+        self.assertEqual(plan['kind'], 'merge')
+        self.assertEqual(set(plan['fish_ids']), {f'low{i}' for i in range(9)} | {'higher'})
+        self.assertEqual({k:v for k,v in plan['forecast_levels'].items() if v}, {2:.9, 3:.1})
+
+    def test_same_rarity_batch_precedes_adjacent_mixture(self):
+        fish = [live_fish(f'low{i}', level=1, breeds=2) for i in range(10)]
+        fish += [live_fish(f'high{i}', level=2, breeds=0) for i in range(9)]
+        plan = decide(snapshot(fish), {**CONFIG, 'auto_breed': False}, 0)
+        self.assertEqual(set(plan['fish_ids']), {f'low{i}' for i in range(10)})
+
+    def test_adjacent_rarity_pool_still_honors_market_lock_and_season_reservations(self):
+        for protection in ('locked', 'pending', 'season_reserved'):
+            fish = [live_fish(f'low{i}', level=1, breeds=0) for i in range(9)] + [live_fish('high', level=2, breeds=0)]
+            for f in fish:
+                f.update(market_merge_state='release', market_merge_valid_until=1000)
+            cfg = {**CONFIG, 'auto_breed':False, 'protection_mode':'market', 'market_merge_price_basis':'highest_buy_order'}
+            if protection == 'locked': fish[-1]['locked'] = True
+            elif protection == 'pending': fish[-1]['market_merge_state'] = 'pending'
+            else: cfg['_season_reserved_ids'] = ['high']
+            self.assertNotEqual(protected_plan(snapshot(fish), cfg)['kind'], 'merge')
+
+    def test_same_group_merges_across_species_but_preserves_other_groups(self):
+        fish = [live_fish(f'm{i}', level=1, breeds=0) for i in range(10)]
+        for i, f in enumerate(fish):
+            f['species'] = f'ordinary{i % 2}'
+        fish += [live_fish('higher', level=4, breeds=0), live_fish('more-stars', level=1, grade=2, breeds=0)]
+        plan = decide(snapshot(fish), CONFIG, 0)
+        self.assertEqual(plan['kind'], 'merge')
+        self.assertEqual(set(plan['fish_ids']), {f'm{i}' for i in range(10)})
+
+    def test_rejected_same_group_cannot_fall_back_to_mixed_batch(self):
+        fish = [live_fish(f'm{i}', level=1, breeds=0) for i in range(10)]
+        fish += [live_fish('higher', level=4, breeds=0)]
+        cfg = {**CONFIG, 'auto_breed': False, '_deferred_merge_batches': [[f'm{i}' for i in range(10)]]}
+        self.assertEqual(decide(snapshot(fish), cfg, 0)['kind'], 'hold')
+
+    def test_incomplete_merge_groups_do_not_block_breeding(self):
+        fish = [live_fish(f'm{i}', level=1, breeds=0) for i in range(9)]
+        fish += [live_fish('a', level=3), live_fish('b', level=3)]
+        plan = decide(snapshot(fish), CONFIG, 0)
+        self.assertEqual((plan['kind'], set(plan['fish_ids'])), ('breed', {'a', 'b'}))
+
     def test_rejected_batch_rotates_to_other_materials_without_protecting_individual_fish(self):
         fish = [live_fish(f'm{i:02}', level=1, breeds=2) for i in range(20)]
         rejected = [[f['id'] for f in fish[:10]]]

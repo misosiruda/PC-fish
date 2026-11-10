@@ -25,6 +25,8 @@ internal sealed class MarketPeerQuote
     public int listing_observed { get; set; }
     public bool no_listings { get; set; }
     public SellingStateProof best_state_proof { get; set; } = new();
+    public BuyOrderProof buy_order_proof { get; set; } = new();
+    public string price_basis { get; set; } = "";
 }
 
 internal sealed class SeasonArticleEvidence
@@ -66,7 +68,8 @@ internal static class UnlistedMarketValue
         SeasonDiscoveryEvidence discovery, int currentSeason)
     {
         var discovered = VerifiedNewSpecies(discovery, currentSeason, catalog, now);
-        if (c.market_merge_price_basis != "best_observed_breeds" || !(NewRegular(f.species) || discovered.Contains(f.species)) || f.basic || f.seasonal
+        bool bidBasis = c.market_merge_price_basis == BuyOrderProof.Basis;
+        if (c.market_merge_price_basis is not ("best_observed_breeds" or BuyOrderProof.Basis) || !(NewRegular(f.species) || discovered.Contains(f.species)) || f.basic || f.seasonal
             || catalog == null || peers == null || f.grade is < 1 or > 5) return false;
         var target = catalog.SingleOrDefault(e => e.species == f.species);
         if (target == null || target.seasonal || target.level != f.level || target.market_names?.Length != 5
@@ -74,17 +77,19 @@ internal static class UnlistedMarketValue
         var valid = peers.Where(p =>
         {
             if (p == null || p.grade != f.grade || NewCohort(p.species) || discovered.Contains(p.species) || p.currency_id != 16
-                || !p.book_complete || p.coverage_version is not (2 or 3) || p.listing_total < 0
+                || !bidBasis && (!p.book_complete || p.coverage_version is not (2 or 3) || p.listing_total < 0)
                 || !double.IsFinite(p.checked_at) || !double.IsFinite(p.valid_until) || p.checked_at < 0 || p.checked_at > now
                 || p.valid_until <= now || p.valid_until <= p.checked_at || p.valid_until > p.checked_at + c.market_quote_ttl_seconds
                 || now - p.checked_at >= c.market_quote_ttl_seconds) return false;
-            if (p.coverage_version == 2 && p.listing_observed < p.listing_total) return false;
-            if (p.coverage_version == 3 && (!SellingStateProof.TryBest(p.best_state_proof,p.market_hash_name,out var best)
+            if (bidBasis && (p.price_basis != BuyOrderProof.Basis || !BuyOrderProof.TryValue(p.buy_order_proof, p.market_hash_name, out var bid)
+                || bid != p.seller_proceeds_krw)) return false;
+            if (!bidBasis && p.coverage_version == 2 && p.listing_observed < p.listing_total) return false;
+            if (!bidBasis && p.coverage_version == 3 && (!SellingStateProof.TryBest(p.best_state_proof,p.market_hash_name,out var best)
                 || best.total != p.listing_total || best.remaining != p.best_remaining_breeds || best.maximum != p.best_maximum_breeds
                 || best.price != p.seller_proceeds_krw)) return false;
-            if (p.no_listings ? p.listing_total != 0 : p.listing_total < 1 || p.best_remaining_breeds < 0
+            if (!bidBasis && (p.no_listings ? p.listing_total != 0 : p.listing_total < 1 || p.best_remaining_breeds < 0
                 || p.best_maximum_breeds < 1 || p.best_remaining_breeds > p.best_maximum_breeds
-                || !double.IsFinite(p.seller_proceeds_krw) || p.seller_proceeds_krw < 0) return false;
+                || !double.IsFinite(p.seller_proceeds_krw) || p.seller_proceeds_krw < 0)) return false;
             var entry = catalog.SingleOrDefault(e => e.species == p.species);
             return entry != null && !entry.seasonal && entry.level == f.level && entry.market_names?.Length == 5
                 && entry.market_names[f.grade - 1] == p.market_hash_name;
@@ -92,12 +97,12 @@ internal static class UnlistedMarketValue
         var expected = catalog.Where(e => !e.seasonal && e.level == f.level && !NewCohort(e.species) && !discovered.Contains(e.species)
             && e.market_names?.Length == 5).Select(e => e.market_names[f.grade-1]).Distinct();
         if (expected.Any(name => !valid.Any(p => p.market_hash_name == name))) return false;
-        valid = valid.Where(p => !p.no_listings).ToArray();
+        valid = valid.Where(p => bidBasis || !p.no_listings).ToArray();
         if (valid.Length == 0) return false;
         double price = valid.Max(p => p.seller_proceeds_krw);
         f.market_state = f.market_merge_state = price <= c.market_min_seller_proceeds_krw ? "release" : "keep";
         f.market_valid_until = f.market_merge_valid_until = valid.Min(p => p.valid_until);
-        f.market_value_source = Source;
+        f.market_value_source = bidBasis ? BuyOrderProof.EstimateSource : Source;
         f.market_estimated_seller_proceeds_krw = price;
         f.market_estimate_peer_count = valid.Length;
         return true;

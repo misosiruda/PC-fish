@@ -54,6 +54,9 @@ internal sealed class SeasonPlan
     public string[] reserved_ids { get; set; } = [];
     public SeasonNeed[] needs { get; set; } = [];
     public SeasonCraft next_craft { get; set; } = null!;
+    public string[] species_priority { get; set; } = [];
+    public string focus_species { get; set; } = "";
+    public string focus_name { get; set; } = "";
 }
 
 // One authoritative allocator serves both exported recommendations and the
@@ -96,8 +99,18 @@ internal static class SeasonPolicy
             || recipes.Select(r => r.species).Distinct().Any(type => !byKey.ContainsKey((type, c.season_target_grade))))
             return Unavailable("Incomplete or cyclic season recipe chain");
 
-        // Reserve only the quantities needed for the remaining goal. Exhausted
-        // fish are used first, then fewer remaining breeds; placed fish last.
+        int Priority(string species)
+        {
+            int index = Array.IndexOf(c.season_species_priority, species);
+            return index < 0 ? int.MaxValue : index;
+        }
+        var speciesPriority = recipes.Select(r => r.species).Distinct()
+            .OrderBy(Priority).ThenBy(type => type, StringComparer.Ordinal).ToArray();
+
+        // Reserve only the quantities needed for the current priority species.
+        // Keep collected goals of every species, but release ordinary materials
+        // of lower-priority species for breeding/merging while the focus is incomplete.
+        // Exhausted fish are used first, then fewer remaining breeds; placed fish last.
         var available = s.fish.Where(f => !HardProtected(f, c)
                 && (f.seasonal ? byKey.ContainsKey((f.species, f.grade)) : f.market_state != "keep" || c.protection_mode != "market"
                     || c.UsesProductMergeValue && !ValueProtected(f, c, s.captured_at)))
@@ -108,7 +121,7 @@ internal static class SeasonPolicy
         var normalNeeds = new Dictionary<(string species, int grade), int>();
         var crafts = new Dictionary<(string species, int grade), int>();
         var goals = recipes.Where(r => r.grade == c.season_target_grade || c.season_goal == "collection" && r.grade < c.season_target_grade)
-            .OrderByDescending(r => r.grade).ThenBy(r => r.species, StringComparer.Ordinal).ToArray();
+            .OrderBy(r => Priority(r.species)).ThenByDescending(r => r.grade).ThenBy(r => r.species, StringComparer.Ordinal).ToArray();
         var missingGoals = new List<(SeasonRecipe recipe, int count)>();
         foreach (var goal in goals)
         {
@@ -133,7 +146,9 @@ internal static class SeasonPolicy
             crafts[key] = crafts.GetValueOrDefault(key) + count;
             foreach (var i in recipe.ingredients) Require((i.species, i.grade), checked(i.amount * count));
         }
-        foreach (var (recipe, count) in missingGoals) Require((recipe.species, recipe.grade), count, true);
+        string focus = speciesPriority.FirstOrDefault(type => missingGoals.Any(g => g.recipe.species == type)) ?? "";
+        foreach (var (recipe, count) in missingGoals.Where(g => g.recipe.species == focus))
+            Require((recipe.species, recipe.grade), count, true);
         var ingredientNames = new Dictionary<string, string>();
         foreach (var recipe in recipes)
             foreach (var ingredient in recipe.ingredients) ingredientNames[ingredient.species] = ingredient.name;
@@ -141,6 +156,8 @@ internal static class SeasonPolicy
         {
             state = missingGoals.Count == 0 ? "complete" : "waiting",
             reason = missingGoals.Count == 0 ? "Season collection goal reached" : "Saving exact recipe quantities; waiting for usable ingredients",
+            species_priority = speciesPriority, focus_species = focus,
+            focus_name = recipes.FirstOrDefault(r => r.species == focus)?.name ?? "",
             reserved_ids = reserved.OrderBy(id => id, StringComparer.Ordinal).ToArray(),
             needs = normalNeeds.OrderBy(k => k.Key.species, StringComparer.Ordinal).ThenBy(k => k.Key.grade).Select(k =>
             {
@@ -149,7 +166,10 @@ internal static class SeasonPolicy
                     grade = k.Key.grade, required = k.Value, reserved = held, missing = Math.Max(0, k.Value - held) };
             }).ToArray()
         };
-        foreach (var key in crafts.Keys.OrderByDescending(k => k.grade).ThenBy(k => k.species, StringComparer.Ordinal))
+        if (focus.Length > 0)
+            plan.reason = "Prioritizing " + (plan.focus_name.Length > 0 ? plan.focus_name : focus)
+                + "; lower-priority ordinary recipe materials remain available for regular breeding/merging";
+        foreach (var key in crafts.Keys.OrderBy(k => Priority(k.species)).ThenByDescending(k => k.grade).ThenBy(k => k.species, StringComparer.Ordinal))
         {
             var recipe = byKey[key];
             var selected = new List<string>();
