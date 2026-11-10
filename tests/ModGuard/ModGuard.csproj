@@ -13,6 +13,7 @@
     <Compile Include="../../mod/PCFish.Automation/UnlistedMarketValue.cs" Link="UnlistedMarketValue.cs" />
     <Compile Include="../../mod/PCFish.Automation/SellingStateProof.cs" Link="SellingStateProof.cs" />
     <Compile Include="../../mod/PCFish.Automation/SeasonCrafting.cs" Link="SeasonCrafting.cs" />
+    <Compile Include="../../mod/PCFish.Automation/StockPolicy.cs" Link="StockPolicy.cs" />
     <Compile Include="../../mod/PCFish.Automation/ResponseDiagnostics.cs" Link="ResponseDiagnostics.cs" />
     <Compile Include="../../mod/PCFish.Automation/RequestWireContract.cs" Link="RequestWireContract.cs" />
     <Compile Include="../../mod/PCFish.Automation/InventorySync.cs" Link="InventorySync.cs" />

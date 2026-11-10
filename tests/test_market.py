@@ -71,7 +71,7 @@ class MarketTests(unittest.TestCase):
 
     def test_best_observed_merge_keeps_action_specific_locks_and_season_quota(self):
         cfg = {**MARKET, 'market_merge_price_basis': 'best_observed_breeds'}
-        materials = [fish(str(i), remaining_breeds=3, market_state='pending', market_merge_state='release',
+        materials = [fish(str(i), remaining_breeds=0, market_state='pending', market_merge_state='release',
                           market_merge_valid_until=NOW + 100) for i in range(10)]
         s = snapshot(materials); s['captured_at'] = NOW
         self.assertEqual(decide(s, cfg, NOW)['kind'], 'merge')
@@ -130,7 +130,7 @@ class MarketTests(unittest.TestCase):
 
     def test_full_breed_merge_policy_is_action_specific_and_preserves_season_quotas(self):
         cfg = {**MARKET, 'market_merge_price_basis': 'full_breeds'}
-        materials = [fish(str(i), remaining_breeds=3, market_state='pending', market_merge_state='release',
+        materials = [fish(str(i), remaining_breeds=0, market_state='pending', market_merge_state='release',
                           market_merge_valid_until=NOW + 100) for i in range(10)]
         s = snapshot(materials)
         s['captured_at'] = NOW

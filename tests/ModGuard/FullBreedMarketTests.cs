@@ -42,8 +42,9 @@ internal static class FullBreedMarketTests
         var state = new Snapshot { captured_at = 1100, hearts = 5, capacity = 999,
             fish = Enumerable.Range(0, 10).Select(i => Fish(i.ToString())).ToArray() };
         foreach (var material in state.fish) MarketProtection.Apply(material, Report(Review(material.id)), cfg, "test", "cfg", 1100);
+        foreach (var material in state.fish) material.remaining_breeds = 0;
         var merge = new Command { request_id = Guid.NewGuid().ToString(), kind = "merge", fish_ids = state.fish.Select(x => x.id).ToArray() };
-        ExecutionGuard.Validate(merge, state, cfg); check(true, "native guard allows nonexhausted low-potential surplus");
+        ExecutionGuard.Validate(merge, state, cfg); check(true, "native guard allows exhausted low-potential material");
         foreach (var protection in new[] { "locked", "manual", "expired", "valuable" })
         {
             var guardedCfg = Config(); var material = state.fish[0];
@@ -60,6 +61,7 @@ internal static class FullBreedMarketTests
             { season = 2, species = "S", grade = 1, ingredients = [new() { species = "A", grade = 1, amount = 1 }] }] };
         cfg.auto_season_craft = true; cfg.season_target_grade = 1;
         state.fish[0].market_state = "keep";
+        state.WithCatalog();
         var plan = SeasonPolicy.Build(state, cfg);
         check(plan.reserved_ids.Length == 1 && plan.next_craft != null, "season quantity and crafting remain available under full-breed value policy");
         bool seasonProtected = false;
@@ -117,12 +119,14 @@ internal static class FullBreedMarketTests
             fish = Enumerable.Range(0, 10).Select(i => Fish(i.ToString())).ToArray() };
         foreach (var material in observedState.fish)
             MarketProtection.Apply(material, Report(ObservedReview(material.id)), observedCfg, "test", "cfg", 1100);
+        foreach (var material in observedState.fish) material.remaining_breeds = 0;
         var observedMerge = new Command { request_id = Guid.NewGuid().ToString(), kind = "merge", fish_ids = observedState.fish.Select(x => x.id).ToArray() };
         ExecutionGuard.Validate(observedMerge, observedState, observedCfg);
-        check(true, "native pre-dispatch guard permits new observed-state merge policy with unused parent capacity");
+        check(true, "native pre-dispatch guard permits exhausted material under observed-state valuation");
         observedState.season = state.season;
         observedCfg.auto_season_craft = true; observedCfg.season_target_grade = 1;
         observedState.fish[0].market_state = "keep";
+        observedState.WithCatalog();
         var observedSeason = SeasonPolicy.Build(observedState, observedCfg);
         check(observedSeason.reserved_ids.Length == 1 && observedSeason.next_craft != null,
             "new observed-state policy also drives ordinary material valuation for season crafting");

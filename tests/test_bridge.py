@@ -139,7 +139,7 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual(decide(s, cfg, 0)['kind'], 'breed')
         # Other merges can still proceed when there is no immediately ready pair.
         for f in fish:
-            f.update(ready_at=1000, ready=False)
+            f.update(ready_at=1000, ready=False, remaining_breeds=0)
         self.assertEqual(decide(s, cfg, 0)['kind'], 'merge')
 
     def test_rejected_breed_pair_does_not_hide_identical_alternative_parents(self):
@@ -175,14 +175,14 @@ class BridgeTests(unittest.TestCase):
             path.write_text(json.dumps(record), encoding='utf-8')
             self.assertEqual(recent_rejected_actions(runtime, 1001)['breed'], [])
 
-    def test_surplus_materials_can_merge_with_remaining_uses_or_cooldown(self):
+    def test_remaining_uses_require_proven_triple_surplus(self):
         fish = [live_fish(f'm{i}', level=1, breeds=3, ready=120) for i in range(10)]
-        self.assertEqual(decide(snapshot(fish), CONFIG, 0)['kind'], 'merge')
+        self.assertNotEqual(decide(snapshot(fish), CONFIG, 0)['kind'], 'merge')
         starters = [live_fish(f'm{i}', level=0, breeds=0) for i in range(10)]
         self.assertNotEqual(decide(snapshot(starters), CONFIG, 0)['kind'], 'merge')
 
     def test_merge_uses_fewer_remaining_breeds_before_useful_surplus_parents(self):
-        low = [live_fish(f'low{i}', level=1, breeds=i % 2) for i in range(10)]
+        low = [live_fish(f'low{i}', level=1, breeds=0) for i in range(10)]
         high = [live_fish(f'high{i}', level=1, breeds=5) for i in range(10)]
         plan = decide(snapshot(high + low), CONFIG, 0)
         self.assertEqual(plan['kind'], 'merge')
@@ -204,7 +204,7 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual({k:v for k,v in plan['forecast_levels'].items() if v}, {2:.9, 3:.1})
 
     def test_same_rarity_batch_precedes_adjacent_mixture(self):
-        fish = [live_fish(f'low{i}', level=1, breeds=2) for i in range(10)]
+        fish = [live_fish(f'low{i}', level=1, breeds=0) for i in range(10)]
         fish += [live_fish(f'high{i}', level=2, breeds=0) for i in range(9)]
         plan = decide(snapshot(fish), {**CONFIG, 'auto_breed': False}, 0)
         self.assertEqual(set(plan['fish_ids']), {f'low{i}' for i in range(10)})
@@ -242,7 +242,7 @@ class BridgeTests(unittest.TestCase):
         self.assertEqual((plan['kind'], set(plan['fish_ids'])), ('breed', {'a', 'b'}))
 
     def test_rejected_batch_rotates_to_other_materials_without_protecting_individual_fish(self):
-        fish = [live_fish(f'm{i:02}', level=1, breeds=2) for i in range(20)]
+        fish = [live_fish(f'm{i:02}', level=1, breeds=0) for i in range(20)]
         rejected = [[f['id'] for f in fish[:10]]]
         cfg = {**CONFIG, 'auto_breed': False, '_deferred_merge_batches': rejected}
         plan = decide(snapshot(fish), cfg, 0)

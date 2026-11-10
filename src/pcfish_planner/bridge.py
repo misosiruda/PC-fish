@@ -22,6 +22,7 @@ from .learning import learn_rules
 from .probabilities import breed_level_probabilities, merge_level_probabilities
 from .market import MarketMonitor, market_settings
 from .merge_policy import merge_batch_allowed
+from .stock_policy import validate_plan as validate_stock_plan, rarity_weights, merge_allowed, merge_utility, material_gain
 
 
 def atomic(path: Path, value: dict) -> None:
@@ -164,11 +165,12 @@ def protected_plan(s: dict, config: dict) -> dict:
     # Spend a full heart before routine inventory reduction so repeated merges
     # cannot starve breeding and waste regeneration. Season crafts are handled
     # separately by decide() and keep their existing precedence.
-    prefer_breeding = s['hearts'] == 5 or s['hearts'] > 0 and config.get('_deferred_merge_batches')
+    prefer_breeding = bool(config.get('_stock_plan')) or s['hearts'] == 5 or s['hearts'] > 0 and config.get('_deferred_merge_batches')
     breeding = _protected_breed_plan(s, config) if prefer_breeding else None
     if breeding is not None and breeding['kind'] == 'breed':
-        breeding['reason'] = ('Hearts full; breed now to resume regeneration' if s['hearts'] == 5
-                              else 'Recent merge rejection; perform available breeding before another merge')
+        if not config.get('_stock_plan'):
+            breeding['reason'] = ('Hearts full; breed now to resume regeneration' if s['hearts'] == 5
+                                  else 'Recent merge rejection; perform available breeding before another merge')
         return breeding
     merge = _protected_merge_plan(s, config)
     if merge is not None:
@@ -180,7 +182,8 @@ def _protected_merge_plan(s: dict, config: dict) -> dict | None:
     now = s['captured_at']
     if config.get('auto_merge', True):
         materials = [f for f in s['fish'] if not f['basic'] and f['level'] > 0
-                     and not protected(f, config, now, action='merge')]
+                     and not protected(f, config, now, action='merge')
+                     and (f['remaining_breeds'] == 0 or f['id'] in config.get('_stock_plan', {}).get('surplus_ids', []))]
         groups = defaultdict(list)
         for f in materials:
             groups[(f['level'], f['grade'])].append(f)
@@ -190,11 +193,12 @@ def _protected_merge_plan(s: dict, config: dict) -> dict | None:
         def batches_for(group):
             ordered = sorted(group, key=material_order)
             return [ordered[i:i + 10] for i in range(len(ordered) - 9)
-                    if frozenset(f['id'] for f in ordered[i:i + 10]) not in rejected]
+                    if frozenset(f['id'] for f in ordered[i:i + 10]) not in rejected
+                    and merge_allowed(s, config, ordered[i:i + 10])]
 
         batches = [batch for group in groups.values() for batch in batches_for(group)]
-        if not batches:
-            seen = set()
+        if not batches or config.get('_stock_plan'):
+            seen = {frozenset(f['id'] for f in batch) for batch in batches}
             for grade in {f['grade'] for f in materials}:
                 for lower in range(1, 5):
                     adjacent = [f for f in materials if f['grade'] == grade and lower <= f['level'] <= lower + 1]
@@ -204,12 +208,13 @@ def _protected_merge_plan(s: dict, config: dict) -> dict | None:
                             batches.append(batch)
                             seen.add(ids)
         if batches:
-            batch = max(batches, key=lambda b: (-max((len(set(f['id'] for f in b) & ids) for ids in rejected), default=0),
-                        sum(f['level'] for f in b), -sum(f['remaining_breeds'] for f in b), -sum(f['grade'] for f in b)))
+            batch = max(batches, key=lambda b: (merge_utility(config, b),
+                        -max((len(set(f['id'] for f in b) & ids) for ids in rejected), default=0),
+                        len({f['level'] for f in b}) == 1, -sum(f['remaining_breeds'] for f in b), sum(f['level'] for f in b)))
             return {'kind': 'merge', 'fish_ids': [f['id'] for f in batch],
-                    'reason': 'Ten same-star ordinary fish; rarity span at most one, forecast never below highest material; same-rarity batches preferred',
+                    'reason': 'Preserve stock and parents; exhausted materials target missing rarity, or same-rarity triple-surplus batch with exhausted fish first',
                     'forecast_levels': merge_level_probabilities([f['level'] for f in batch]),
-                    'objective': 'protected_rarity_progress', 'profit_estimate': None}
+                    'objective': 'material_rarity_progress' if config.get('_stock_plan') else 'protected_rarity_progress', 'profit_estimate': None}
     return None
 
 
@@ -235,12 +240,22 @@ def _protected_breed_plan(s: dict, config: dict) -> dict:
         # separate candidates along with two representatives never rejected.
         if len(buckets[key]) < 2 or f['id'] in rejected_ids:
             buckets[key].append(f)
-    candidates = [f for bucket in buckets.values() for f in bucket][:24]
+    by_level = defaultdict(list)
+    for bucket in buckets.values():
+        for f in bucket:
+            by_level[f['level']].append(f)
+    # Keep representatives from EVERY rarity: high-only truncation can discard
+    # the low-rarity parents needed for current material shortages.
+    candidates = []
+    for _, group in sorted(by_level.items()):
+        representatives = [f for f in group if f['id'] not in rejected_ids][:2]
+        representatives += [f for f in group if f not in representatives][:4 - len(representatives)]
+        candidates.extend(representatives)
     if len(candidates) < 2:
         return {'kind': 'hold', 'reason': 'Waiting for two unprotected mature parents'}
     horizon = 900
     # The weights are policy preferences, NOT estimated sale prices or Grade odds.
-    weights = (0, 1, 2, 4, 10, 25)
+    weights = rarity_weights(config)
     utility = {(a, b): sum(weights[level] * p for level, p in breed_level_probabilities(a, b).items())
                for a in range(6) for b in range(6)}
     initial = tuple((max(0, math.ceil(f['ready_at'] - now)), 1 if f['basic'] else f['remaining_breeds']) for f in candidates)
@@ -288,9 +303,9 @@ def _protected_breed_plan(s: dict, config: dict) -> dict:
         return best
 
     score, (kind, selected, at) = solve(0, s['hearts'], max(0, math.ceil(s['next_heart_at'] - now)), initial, min(3, s['capacity'] - len(s['fish'])))
-    result = {'kind': kind, 'fish_ids': [candidates[i]['id'] for i in selected], 'objective': 'protected_rarity_progress',
+    result = {'kind': kind, 'fish_ids': [candidates[i]['id'] for i in selected], 'objective': 'material_rarity_progress' if config.get('_stock_plan') else 'protected_rarity_progress',
               'profit_estimate': None, 'lookahead_utility': score, 'search_nodes': nodes, 'search_limited': limited,
-              'reason': 'Compare current parents against cooldown/heart events; no Grade or price distribution assumed'}
+              'reason': 'Target missing material rarities; species/star odds unknown' if config.get('_stock_plan') else 'Compare current parents against cooldown/heart events; no Grade or price distribution assumed'}
     if kind == 'wait':
         result['until'] = now + at
     if kind == 'breed':
@@ -310,12 +325,60 @@ def economic_plan(s: dict, config: dict) -> dict:
         fishes.append({'id': f['id'], 'species': f['species'], 'level': f['level'], 'grade': f['grade'],
                        'remaining_breeds': f['remaining_breeds'], 'ready_at': f['ready_at'] if not f['basic'] or f['ready'] else s['captured_at'] + 86400,
                        'unlimited_breeding': f['basic'], 'protected_breed': protected(f, config, s['captured_at']) or not config.get('auto_breed', True),
-                       'protected_merge': protected(f, config, s['captured_at'], action='merge') or not config.get('auto_merge', True), 'seasonal': f['seasonal']})
+                       'protected_merge': protected(f, config, s['captured_at'], action='merge') or not config.get('auto_merge', True),
+                       'seasonal': f['seasonal']})
     payload['schema_version'] = 1
     payload['state'] = {'now': s['captured_at'], 'fish': fishes, 'hearts': s['hearts'], 'next_heart_at': s['next_heart_at']}
     payload.setdefault('config', {}).update(allow_assumptions=False, inventory_capacity=s['capacity'],
                                           protect_merge_grade_at_least=6 if market_settings(config)[0] == 'market' else config.get('protect_grade_at_least', 3), allow_seasonal_merge=False)
-    recommendation = Planner(Problem(payload)).run()
+    if config.get('_stock_plan'):
+        # The live stock objective is a material count, so a currency threshold
+        # from an economic model must not suppress useful material production.
+        payload['config']['minimum_gain'] = 0
+    class LivePlanner(Planner):
+        def parent_order(self, fish):
+            if not config.get('_stock_plan'):
+                return super().parent_order(fish)
+            targets = {(n['species'], n['grade']) for n in config['_stock_plan']['needs'] if n['missing'] > 0}
+            useful = max((sum(o.probability for o in r.outcomes if (o.fish['species'], o.fish['grade']) in targets)
+                          for r in self.p.rules.values() if r.kind == 'breed' and fish.traits() in r.parents
+                          and self.trusted(r.evidence, r.sample_count)), default=0)
+            return (-useful, *super().parent_order(fish))
+
+        def action_allowed(self, state, action):
+            if action.kind != 'merge':
+                return True
+            if config.get('_stock_plan'):
+                # Native reservations are valid for the observed inventory only.
+                # Replan after a real result instead of spending hypothetical stock.
+                if state.serial != 0:
+                    return False
+                selected = [f for f in s['fish'] if f['id'] in action.fish_ids]
+            else:
+                # Exhaustion can change after a modeled breed. Preserve ordinary
+                # economic lookahead, checking uses at the simulated action time.
+                selected = [{'id': f.id, 'level': f.level, 'grade': f.grade, 'remaining_breeds': f.remaining_breeds}
+                            for f in state.fish if f.id in action.fish_ids]
+            return merge_allowed(s, config, selected)
+
+        def transitions(self, state, action):
+            outcomes = super().transitions(state, action)
+            if not config.get('_stock_plan'):
+                return outcomes
+            needs = config['_stock_plan']['needs']
+            # Economic inputs still have to pass the existing quote/joint-model
+            # validation. With a stock goal, useful materials take priority over money.
+            return tuple((p, material_gain(state, after, needs, self.p.state), after) for p, _, after in outcomes)
+
+    recommendation = LivePlanner(Problem(payload)).run()
+    if config.get('_stock_plan'):
+        recommendation['expected_material_gain'] = recommendation.pop('expected_inventory_value_gain')
+        recommendation['immediate_material_gain'] = recommendation.pop('immediate_gain')
+        recommendation['objective'] = 'verified_material_shortage_reduction'
+        recommendation['reason'] = 'Verified species/star outcomes compared for current material shortages; no profit claim'
+        recommendation.pop('currency', None)
+        recommendation['alternatives'] = []
+        recommendation['notes'] = ['Uses verified joint outcomes and quotes; score is useful material count, not monetary gain.']
     return {**recommendation['action'], 'reason': recommendation['reason'], 'economic_details': recommendation}
 
 
@@ -341,12 +404,15 @@ def decide(s: dict, config: dict, now: float) -> dict:
         state = season_details.get('state')
         if state not in ('inactive', 'complete', 'waiting', 'ready'):
             return {'kind': 'hold', 'reason': season_details.get('reason', 'Season recipe plan unavailable')}
+        if season_details.get('policy_version') != 2:
+            return {'kind': 'hold', 'reason': 'Season stock policy requires the updated native plugin (policy version 2)'}
+        validate_stock_plan(season_details, s['fish'])
         ids = season_details.get('reserved_ids')
         if not isinstance(ids, list) or any(not isinstance(id, str) for id in ids):
             raise ValidationError('invalid season material reservations')
         # Recipe reservations preserve the material itself. Breeding retains
         # the parent and only spends a use, so do not turn these into manual locks.
-        config = {**config, '_season_reserved_ids': ids}
+        config = {**config, '_season_reserved_ids': ids, '_stock_plan': season_details}
         craft = season_details.get('next_craft')
         if state == 'ready':
             if not isinstance(craft, dict) or not craft.get('fish_ids') or craft.get('season') != season.get('id'):
