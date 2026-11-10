@@ -66,6 +66,20 @@ internal static class BuyOrderTests
             price_basis=BuyOrderProof.Basis,buy_order_proof=Proof("Old ★"),seller_proceeds_krw=1000};
         check(UnlistedMarketValue.Apply(target,[peer],catalog,cfg,1100)&&target.market_estimated_seller_proceeds_krw==1000
             &&target.market_value_source==BuyOrderProof.EstimateSource,"unlisted highest-bid peer estimate");
+        var listedReport = Report();
+        var listedFish = Fish();
+        listedFish.species = listedReport.fish[0].species = "FS00041";
+        listedFish.market_hash_name = listedReport.fish[0].market_hash_name = "New ★";
+        listedReport.peer_quotes = [peer];
+        listedReport.fish[0].value_source = BuyOrderProof.EstimateSource;
+        listedReport.fish[0].buy_order_proof = null!;
+        listedReport.fish[0].product_listings = 0;
+        MarketProtection.Apply(listedFish,listedReport,cfg,"test","cfg",1100,catalog);
+        check(listedFish.market_state == "release", "unlisted control can use verified peers");
+        listedReport.fish[0].product_listings = 1;
+        MarketProtection.Apply(listedFish,listedReport,cfg,"test","cfg",1100,catalog);
+        check(listedFish.market_state == "pending" && listedFish.market_merge_state == "pending",
+            "listed fish cannot use peers while own bid is unverified");
         peer.seller_proceeds_krw=1;
         check(!UnlistedMarketValue.Apply(target,[peer],catalog,cfg,1100),"native rejects underpriced peer claim");
         peer.seller_proceeds_krw=1000;peer.buy_order_proof=null!;

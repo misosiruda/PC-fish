@@ -124,3 +124,32 @@ class BuyOrderTests(unittest.TestCase):
         q=quote(0,0);q['market_hash_name']=f['market_hash_name'];q['buy_order_proof']['market_hash_name']=f['market_hash_name']
         r=apply_estimate(f,review_fish(f,q,CFG,NOW),catalog,peers,CFG,NOW)
         self.assertEqual((r['value_source'],r['seller_proceeds_krw']),(buy_orders.BASIS,0))
+
+    def test_listed_new_species_with_unverified_bid_cannot_use_cheap_peers(self):
+        def entry(species, name):
+            return dict(species=species, level=1, seasonal=False,
+                        market_names=[name+' '+('★'*g) for g in range(1, 6)])
+        catalog = [entry('FS00041', 'New'), entry('FS00001', 'Old')]
+        f = fish(species='FS00041', grade=1, level=1, market_hash_name='New ★')
+        cheap = quote(0, 0)
+        cheap['market_hash_name'] = cheap['buy_order_proof']['market_hash_name'] = 'Old ★'
+        peers = peer_quotes(catalog, {'Old ★': cheap}, NOW, 86400, price_basis=buy_orders.BASIS)
+        for source in ('legacy', 'bad_fee', 'expired', 'total_only', 'samples_only'):
+            with self.subTest(source=source):
+                own = quote()
+                own['market_hash_name'] = own['buy_order_proof']['market_hash_name'] = 'New ★'
+                if source == 'bad_fee':
+                    own['buy_order_proof']['fee_samples'] = []
+                elif source == 'expired':
+                    own['checked_at'] = NOW - 86400
+                else:
+                    del own['buy_order_proof']
+                if source == 'total_only':
+                    own.update(listing_total=1, listing_observed=0, samples=[])
+                if source == 'samples_only':
+                    own.pop('listing_total'); own.pop('listing_observed')
+                reviewed = review_fish(f, own, CFG, NOW)
+                self.assertGreater(reviewed['product_listings'], 0)
+                final = apply_estimate(f, reviewed, catalog, peers, CFG, NOW)
+                self.assertEqual((final['state'], final['merge_state']), ('pending', 'pending'))
+                self.assertEqual(final['value_source'], 'unavailable')

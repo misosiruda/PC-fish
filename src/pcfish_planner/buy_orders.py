@@ -124,7 +124,18 @@ def observed_quote(quote, name, now, ttl):
 
 
 def review(fish, quote, config, now, result):
+    # A failed/expired bid proof does not erase evidence that this product is
+    # listed. Retain it even from an old ask cache so the unlisted-species
+    # estimator cannot turn an unknown own bid into a cheap peer valuation.
+    listed = 0
+    if isinstance(quote, dict) and quote.get('market_hash_name') == fish['market_hash_name']:
+        counts = [quote.get('listing_total'), quote.get('listing_observed')]
+        samples = quote.get('samples')
+        if isinstance(samples, list):
+            counts.append(len(samples))
+        listed = max((n for n in counts if integer(n)), default=0)
     result.update(value_source='unavailable', price_basis=BASIS, buy_order_proof=None,
+                  product_listings=listed,
                   reason='Awaiting verified highest buy order', merge_reason='Awaiting verified highest buy order')
     value = observed_quote(quote, fish['market_hash_name'], now, config.get('market_quote_ttl_seconds', 86400))
     if value is None:
