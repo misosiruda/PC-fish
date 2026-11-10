@@ -325,8 +325,8 @@ def economic_plan(s: dict, config: dict) -> dict:
         fishes.append({'id': f['id'], 'species': f['species'], 'level': f['level'], 'grade': f['grade'],
                        'remaining_breeds': f['remaining_breeds'], 'ready_at': f['ready_at'] if not f['basic'] or f['ready'] else s['captured_at'] + 86400,
                        'unlimited_breeding': f['basic'], 'protected_breed': protected(f, config, s['captured_at']) or not config.get('auto_breed', True),
-                       'protected_merge': protected(f, config, s['captured_at'], action='merge') or not config.get('auto_merge', True)
-                       or f['remaining_breeds'] > 0 and f['id'] not in config.get('_stock_plan', {}).get('surplus_ids', []), 'seasonal': f['seasonal']})
+                       'protected_merge': protected(f, config, s['captured_at'], action='merge') or not config.get('auto_merge', True),
+                       'seasonal': f['seasonal']})
     payload['schema_version'] = 1
     payload['state'] = {'now': s['captured_at'], 'fish': fishes, 'hearts': s['hearts'], 'next_heart_at': s['next_heart_at']}
     payload.setdefault('config', {}).update(allow_assumptions=False, inventory_capacity=s['capacity'],
@@ -348,11 +348,17 @@ def economic_plan(s: dict, config: dict) -> dict:
         def action_allowed(self, state, action):
             if action.kind != 'merge':
                 return True
-            # Native reservations are valid for the observed inventory only.
-            # Replan merges after a real result rather than spending hypothetical stock.
-            if state.serial != 0:
-                return False
-            selected = [f for f in s['fish'] if f['id'] in action.fish_ids]
+            if config.get('_stock_plan'):
+                # Native reservations are valid for the observed inventory only.
+                # Replan after a real result instead of spending hypothetical stock.
+                if state.serial != 0:
+                    return False
+                selected = [f for f in s['fish'] if f['id'] in action.fish_ids]
+            else:
+                # Exhaustion can change after a modeled breed. Preserve ordinary
+                # economic lookahead, checking uses at the simulated action time.
+                selected = [{'id': f.id, 'level': f.level, 'grade': f.grade, 'remaining_breeds': f.remaining_breeds}
+                            for f in state.fish if f.id in action.fish_ids]
             return merge_allowed(s, config, selected)
 
         def transitions(self, state, action):

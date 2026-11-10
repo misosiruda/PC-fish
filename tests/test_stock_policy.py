@@ -130,6 +130,42 @@ class StockPolicyTests(unittest.TestCase):
         self.assertNotIn('expected_inventory_value_gain', plan['economic_details'])
         self.assertGreater(plan['economic_details']['expected_material_gain'], 0)
 
+    def test_economic_lookahead_can_exhaust_parents_then_merge_without_stock(self):
+        parents = [fish('a', level=1), fish('b', level=1)]
+        exhausted = [fish(str(i), level=1, breeds=0) for i in range(8)]
+        merge_inputs = [dict(f, remaining_breeds=0) for f in parents] + exhausted
+        model = problem(parents + exhausted,
+                        [rule('breed', parents, [(1, result('child', level=1))]),
+                         rule('merge', merge_inputs, [(1, result('merged', level=2))], kind='merge')],
+                        [quote('species1', breeds=1, value=10), quote('species1', value=1),
+                         quote('child', value=0), quote('merged', value=50)], max_actions=2)
+        model['synthetic'] = False
+        for r in model['rules']: r.update(evidence='verified', sample_count=30)
+        for q in model['quotes']: q['evidence'] = 'verified'
+        fishes = [live_fish(f['id'], level=1, breeds=f['remaining_breeds']) for f in parents + exhausted]
+        cfg = {**CONFIG, 'mode': 'economic', 'economic_model_file': 'test-only', 'auto_season_craft': False}
+        with patch('pcfish_planner.bridge.read_json', return_value=deepcopy(model)):
+            plan = decide(snapshot(fishes), cfg, 0)
+        self.assertEqual((plan['kind'], set(plan['fish_ids'])), ('breed', {'a', 'b'}))
+        self.assertLess(plan['economic_details']['immediate_gain'], 0)
+        self.assertGreater(plan['economic_details']['expected_inventory_value_gain'], 0)
+        # A stock allocation still requires a real result before planning a merge.
+        with patch('pcfish_planner.bridge.read_json', return_value=deepcopy(model)):
+            plan = decide(policy_state(fishes, [need(2, species='merged')]), {**cfg, 'auto_season_craft': True}, 0)
+        self.assertEqual(plan['kind'], 'hold')
+
+    def test_economic_without_stock_cannot_merge_unexhausted_fish(self):
+        fishes = [fish(str(i), level=1) for i in range(10)]
+        model = problem(fishes, [rule('merge', fishes, [(1, result('merged', level=2))], kind='merge')],
+                        [quote('species1', breeds=1, value=1), quote('merged', value=100)])
+        model['synthetic'] = False
+        for r in model['rules']: r.update(evidence='verified', sample_count=30)
+        for q in model['quotes']: q['evidence'] = 'verified'
+        with patch('pcfish_planner.bridge.read_json', return_value=model):
+            plan = decide(snapshot([live_fish(f['id'], level=1) for f in fishes]),
+                          {**CONFIG, 'mode': 'economic', 'economic_model_file': 'test-only', 'auto_breed': False}, 0)
+        self.assertEqual(plan['kind'], 'hold')
+
 
 if __name__ == '__main__':
     unittest.main()
