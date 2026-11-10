@@ -28,12 +28,13 @@ CURRENCY = 16  # KRW; Steam's integer monetary fields use 100 units per won.
 
 
 class MarketUnavailable(ValueError):
-    def __init__(self, message, *, retry_after_seconds=900, product_specific=False, rate_limited=False, reason_code='unavailable'):
+    def __init__(self, message, *, retry_after_seconds=900, product_specific=False, rate_limited=False, reason_code='unavailable', observed_quote=None):
         super().__init__(message)
         self.retry_after_seconds = retry_after_seconds
         self.product_specific = product_specific
         self.rate_limited = rate_limited
         self.reason_code = reason_code
+        self.observed_quote = observed_quote
 
 
 def retry_delay(headers, now, fallback=3600):
@@ -160,7 +161,7 @@ def fetch_quote(name, **options):
         quote = fetch_page(name)
         if buy_orders.observed_quote(quote, name, time.time(), 86400) is None:
             raise MarketUnavailable('Highest buy order or KRW fee evidence unavailable', product_specific=True,
-                                    reason_code='buy_order_unavailable')
+                                    reason_code='buy_order_unavailable', observed_quote=quote)
         return quote
     from .market_states import fetch_quote as fetch_book
     return fetch_book(name, **options)
@@ -312,6 +313,12 @@ class MarketMonitor:
                 self.rate_limit_failures = 0
                 self.next_request_at = now + interval
             except Exception as exc:
+                # Bid validation may fail after the page already proved that
+                # the product is listed. Keep that evidence for protection,
+                # without treating the failed lookup as a successful quote.
+                partial = exc.observed_quote if isinstance(exc, MarketUnavailable) else None
+                if isinstance(partial, dict) and partial.get('market_hash_name') == self.pending_name:
+                    self.cache[self.pending_name] = partial
                 observed_http = getattr(exc, 'http_responses_observed', 0)
                 limited = isinstance(exc, HTTPError) and exc.code in (403, 429) or getattr(exc, 'rate_limited', False)
                 delay = retry_delay(exc.headers, now) if isinstance(exc, HTTPError) and limited else getattr(exc, 'retry_after_seconds', 900)

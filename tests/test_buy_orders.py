@@ -3,10 +3,11 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from pcfish_planner import buy_orders
 from pcfish_planner.bridge import decide
-from pcfish_planner.market import MarketMonitor, parse_page, review_fish
+from pcfish_planner.market import MarketMonitor, MarketUnavailable, parse_page, review_fish
 from pcfish_planner.unlisted_value import apply_estimate, peer_quotes
 from test_market import NAME, NOW, MARKET, fish, page, html, snapshot
 
@@ -30,6 +31,46 @@ def quote(bid=115000, count=3):
 
 
 class BuyOrderTests(unittest.TestCase):
+    def test_failed_fresh_bid_fetch_retains_listings_and_backoff_across_restart(self):
+        catalog = [dict(species=species, level=1, seasonal=False,
+                        market_names=[name+' '+('★'*g) for g in range(1, 6)])
+                   for species, name in [('FS00041', 'New'), ('FS00001', 'Old')]]
+        f = fish(species='FS00041', grade=1, level=1, market_hash_name='New ★')
+        cheap = quote(0, 0)
+        cheap['market_hash_name'] = cheap['buy_order_proof']['market_hash_name'] = 'Old ★'
+        own = quote()
+        own['market_hash_name'] = 'New ★'
+        own['buy_order_proof'] = None
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            monitor = MarketMonitor(root)
+            monitor.cache['Old ★'] = cheap
+            s = snapshot([f]); s['market_catalog'] = catalog
+            with patch('pcfish_planner.browser_market.fetch_quote', return_value=own), \
+                    patch('pcfish_planner.market.time.time', return_value=NOW), \
+                    patch.object(monitor.seasons, 'update', return_value={}):
+                try:
+                    monitor.update(s, CFG, NOW)
+                    with self.assertRaises(MarketUnavailable):
+                        monitor.future.result(timeout=2)
+                    report = monitor.update(s, CFG, NOW+1)
+                    self.assertEqual(monitor.cache['New ★']['listing_total'], 2)
+                    self.assertGreater(monitor.failures['New ★']['retry_at'], NOW+1)
+                    row = report['fish'][0]
+                    self.assertEqual((row['state'], row['merge_state']), ('pending', 'pending'))
+                    self.assertGreater(row['product_listings'], 0)
+                finally:
+                    monitor.close()
+            restarted = MarketMonitor(root)
+            try:
+                with patch.object(restarted.seasons, 'update', return_value={}):
+                    report = restarted.update(s, CFG, NOW+2)
+                self.assertIsNone(restarted.future)
+                self.assertEqual(report['fish'][0]['merge_state'], 'pending')
+                self.assertGreater(report['fish'][0]['product_listings'], 0)
+            finally:
+                restarted.close()
+
     def test_highest_bid_net_replaces_asks_and_breed_matching(self):
         for bid, net, state in ((3000, 10, 'release'), (4000, 20, 'release'), (115000, 1000, 'release'),
                                 (116000, 1010, 'keep'), (169000, 1470, 'keep')):
