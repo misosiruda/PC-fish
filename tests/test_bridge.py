@@ -90,6 +90,8 @@ class BridgeTests(unittest.TestCase):
         s = snapshot([live_fish('a', level=2), live_fish('b', level=2)])
         s.update(menu_name='Breed', window_open=False, home_menu=True, ui_busy=False, ui_block_reason='')
         self.assertEqual(decide(s, CONFIG, 0)['kind'], 'breed')
+        s.update(window_open=True, overlay_open=True, home_menu=False)
+        self.assertEqual(decide(s, CONFIG, 0)['kind'], 'breed')
         s.update(ui_busy=True, ui_block_reason='Waiting for confirmation dialog')
         plan = decide(s, CONFIG, 0)
         self.assertEqual(plan['kind'], 'hold')

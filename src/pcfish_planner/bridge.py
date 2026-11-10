@@ -407,6 +407,16 @@ def run(runtime: Path, config_path: Path, session: str) -> None:
             rejected = recent_rejected_actions(runtime, time.time())
             cfg['_deferred_merge_batches'] = rejected['merge']
             cfg['_deferred_breed_pairs'] = rejected['breed'] + recent_unpersisted_breed_pairs(runtime, time.time())
+            # Market/evidence work can outlast the five-second action freshness
+            # window. Plan from a fresh native capture, retaining session/config
+            # checks rather than extending the validity of the old snapshot.
+            s = read_json(snapshot_path)
+            if s['session'] != session:
+                market.close()
+                return
+            if s['config_digest'] != digest or read_text(config_path) != raw:
+                time.sleep(1)
+                continue
             plan = decide(s, cfg, time.time())
             if cfg.get('auto_season_craft', False):
                 atomic(runtime / 'season-review.json', {'captured_at': time.time(), 'session': session,

@@ -20,7 +20,7 @@ using UnityEngine;
 
 namespace PCFish.Automation;
 
-[BepInPlugin("local.pcfish.automation", "PC FISH Automation", "0.4.27")]
+[BepInPlugin("local.pcfish.automation", "PC FISH Automation", "0.4.32")]
 public sealed partial class Plugin : BasePlugin
 {
     internal static Plugin Current = null!;
@@ -138,7 +138,7 @@ public sealed partial class Plugin : BasePlugin
         }
     }
     void Status(string state, object extra = null) => Atomic(Path.Combine(root, "status.json"), new
-    { version = "0.4.27", session, captured_at = Now, state, message, in_flight = inFlight, uncertain, pending_id = pendingId,
+    { version = "0.4.32", session, captured_at = Now, state, message, in_flight = inFlight, uncertain, pending_id = pendingId,
         native_breed_retry = nativeBreedRetry,
         native_comparison = nativeComparison,
         native_breed_flow = NativeBreedRequest ? recovery.flow : "",

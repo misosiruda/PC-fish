@@ -70,14 +70,12 @@ internal sealed class TankIndicatorSynchronizer
 internal static class UiActivityGuard
 {
     // currentMenuType remembers the last tab even after its window is closed.
-    // Only live visibility and actual transactions are evidence of interaction.
+    // Menus and lists are observation surfaces, not evidence of a transaction.
     internal static bool IsHomeContext(bool windowOpen, bool selectedHome) => !windowOpen || selectedHome;
     internal static string BlockReason(bool networkBusy, bool confirmationOpen, bool levelPopupOpen, bool windowOpen, bool overlayOpen)
         => networkBusy ? "Waiting for game network operation"
         : confirmationOpen ? "Waiting for confirmation dialog"
         : levelPopupOpen ? "Waiting for level-up reward popup"
-        : windowOpen ? "Waiting for visible game menu to close"
-        : overlayOpen ? "Waiting for visible game overlay to close"
         : "";
 }
 
@@ -102,10 +100,10 @@ internal sealed class NetworkUiLease
 
 internal static class LevelUpGuard
 {
-    // A Home panel or the specific level reward popup may be open. Other
-    // confirmations, menus and any outstanding operation remain interlocked.
+    // Observation menus may stay open. Confirmations and outstanding operations
+    // remain interlocked; the specific level reward popup can be handled here.
     internal static bool CanHandle(Settings c, Snapshot s) => c.enabled && c.auto_level_up && c.mode is "protected" or "economic"
-        && s.home_menu && !s.overlay_open && !s.network_busy && !s.confirmation_open && !s.request_in_flight && !s.uncertain;
+        && !s.network_busy && !s.confirmation_open && !s.request_in_flight && !s.uncertain;
 
     internal static bool CanUpgrade(Settings c, Snapshot s) => CanHandle(c, s) && !s.level_up_popup_open
         && s.level_up_available && s.tank_level >= 1 && s.tank_level < s.max_tank_level
