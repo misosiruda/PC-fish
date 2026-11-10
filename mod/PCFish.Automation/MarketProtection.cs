@@ -38,6 +38,8 @@ internal sealed class MarketReview
     public int listing_total { get; set; }
     public int listing_observed { get; set; }
     public SellingStateProof best_state_proof { get; set; } = new();
+    public BuyOrderProof buy_order_proof { get; set; } = new();
+    public string price_basis { get; set; } = "";
 }
 
 internal static class MarketProtection
@@ -62,6 +64,8 @@ internal static class MarketProtection
         f.market_estimated_seller_proceeds_krw = null;
         f.market_estimate_peer_count = 0;
         f.market_book_complete = false;
+        f.market_highest_buy_order_krw = null;
+        f.market_buy_order_count = 0;
         if (cfg.protection_mode != "market" || f.basic) return;
         if (report == null || report.schema_version != 1 || report.session != session || report.config_digest != digest || report.fish == null) return;
         var matches = report.fish.Where(r => r != null && r.id == f.id).ToArray();
@@ -70,7 +74,7 @@ internal static class MarketProtection
         if (string.IsNullOrWhiteSpace(f.market_hash_name) || r.species != f.species || r.variant != f.variant || r.grade != f.grade
             || r.remaining_breeds != f.remaining_breeds || r.maximum_breeds != f.maximum_breeds || r.market_hash_name != f.market_hash_name
             || r.currency_id != 16) return;
-        if (r.value_source == UnlistedMarketValue.Source && r.product_listings == 0)
+        if (r.value_source is UnlistedMarketValue.Source or BuyOrderProof.EstimateSource && r.product_listings == 0)
         {
             UnlistedMarketValue.Apply(f, report.peer_quotes, catalog, cfg, now, report.season_evidence, currentSeason);
             return;
@@ -79,6 +83,17 @@ internal static class MarketProtection
             || r.valid_until <= now || r.valid_until <= r.checked_at || r.valid_until > r.checked_at + cfg.market_quote_ttl_seconds
             || now - r.checked_at >= cfg.market_quote_ttl_seconds) return;
         f.market_value_source = "observed";
+        if (cfg.market_merge_price_basis == BuyOrderProof.Basis)
+        {
+            if (r.price_basis != BuyOrderProof.Basis || !BuyOrderProof.TryValue(r.buy_order_proof, f.market_hash_name, out var bid)) return;
+            f.market_value_source = BuyOrderProof.Basis;
+            f.market_state = f.market_merge_state = bid <= cfg.market_min_seller_proceeds_krw ? "release" : "keep";
+            f.market_valid_until = f.market_merge_valid_until = r.valid_until;
+            f.market_seller_proceeds_krw = f.market_best_seller_proceeds_krw = bid;
+            f.market_highest_buy_order_krw = r.buy_order_proof.highest_buy_order_minor / 100.0;
+            f.market_buy_order_count = r.buy_order_proof.buy_order_count;
+            return;
+        }
         if (cfg.market_merge_price_basis == "best_observed_breeds")
         {
             bool covered = r.book_complete && r.coverage_version == 2 && r.listing_total > 0
@@ -112,7 +127,7 @@ internal static class MarketProtection
 
     internal static bool CanLock(FishState f, Settings c, Snapshot s) => c.enabled && c.protection_mode == "market"
         && c.mode is "protected" or "economic" && !s.ui_busy && !s.request_in_flight && !s.uncertain
-        && !f.basic && !f.locked && f.market_value_source != UnlistedMarketValue.Source && f.market_state == "keep" && f.market_valid_until > s.captured_at
+        && !f.basic && !f.locked && f.market_value_source is not (UnlistedMarketValue.Source or BuyOrderProof.EstimateSource) && f.market_state == "keep" && f.market_valid_until > s.captured_at
         && (!c.UsesProductMergeValue || c.market_merge_price_basis != "best_observed_breeds" || f.market_book_complete)
         && !(c.UsesProductMergeValue && f.market_merge_state == "release" && f.market_merge_valid_until > s.captured_at);
 

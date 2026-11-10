@@ -1,6 +1,9 @@
 using PCFish.Automation;
 
 int checkedCases = 0;
+SameGroupMergeTests.Run((pass, scenario) => { if (!pass) throw new Exception(scenario); checkedCases++; });
+BuyOrderTests.Run((pass, scenario) => { if (!pass) throw new Exception(scenario); checkedCases++; });
+SeasonPriorityTests.Run((pass, scenario) => { if (!pass) throw new Exception(scenario); checkedCases++; });
 ResponseBindingTests.Run((pass, scenario) => { if (!pass) throw new Exception(scenario); checkedCases++; });
 SellingStateTests.Run((pass, scenario) => { if (!pass) throw new Exception(scenario); checkedCases++; });
 UnlistedMarketTests.Run((pass, scenario) => { if (!pass) throw new Exception(scenario); checkedCases++; });
@@ -66,7 +69,7 @@ void Check(bool pass, string scenario)
 Check(LevelUpGuard.CanUpgrade(Settings(), LevelState()), "upgrade while Home panel is open");
 var econ = Settings(); econ.mode = "economic";
 Check(LevelUpGuard.CanUpgrade(econ, LevelState()), "economic mode also levels");
-foreach (var field in new[] { "paused", "observe", "disabled", "trade", "network", "confirmation", "pending", "uncertain", "popup", "xp", "max", "unavailable", "missing_threshold" })
+foreach (var field in new[] { "paused", "observe", "disabled", "network", "confirmation", "pending", "uncertain", "popup", "xp", "max", "unavailable", "missing_threshold" })
 {
     var s = LevelState(); var cfg = Settings();
     switch(field)
@@ -74,7 +77,6 @@ foreach (var field in new[] { "paused", "observe", "disabled", "trade", "network
         case "paused": cfg.enabled = false; break;
         case "observe": cfg.mode = "observe"; break;
         case "disabled": cfg.auto_level_up = false; break;
-        case "trade": s.home_menu = false; break;
         case "network": s.network_busy = true; break;
         case "confirmation": s.confirmation_open = true; break;
         case "pending": s.request_in_flight = true; break;
@@ -112,17 +114,27 @@ foreach(var lastTab in new[] { "Home", "Collection", "Breed", "Merge", "Trade", 
 foreach(var reason in new[] {
     UiActivityGuard.BlockReason(true, false, false, false, false),
     UiActivityGuard.BlockReason(false, true, false, false, false),
-    UiActivityGuard.BlockReason(false, false, true, false, false),
-    UiActivityGuard.BlockReason(false, false, false, true, false),
-    UiActivityGuard.BlockReason(false, false, false, false, true) })
+    UiActivityGuard.BlockReason(false, false, true, true, true) })
 {
     Check(reason.Length > 0, "real activity has an explicit block reason");
     var s = Snapshot(); s.ui_busy = true;
     Reject(() => {}, Breed(), s, Settings());
 }
-Check(!UiActivityGuard.IsHomeContext(true, false), "visible non-Home menu blocks leveling");
-var overlay = LevelState(); overlay.overlay_open = true;
-Check(!LevelUpGuard.CanUpgrade(Settings(), overlay), "visible overlay blocks leveling");
+foreach (var windowOpen in new[] { false, true })
+foreach (var overlayOpen in new[] { false, true })
+{
+    var reason = UiActivityGuard.BlockReason(false, false, false, windowOpen, overlayOpen);
+    Check(reason.Length == 0, "observation surfaces do not block automation");
+    var s = Snapshot(); s.window_open = windowOpen; s.overlay_open = overlayOpen;
+    s.home_menu = false; s.ui_busy = reason.Length != 0;
+    ExecutionGuard.Validate(Breed(), s, Settings()); checkedCases++;
+    s.request_in_flight = true;
+    Reject(() => {}, Breed(), s, Settings());
+    s.request_in_flight = false; s.uncertain = true;
+    Reject(() => {}, Breed(), s, Settings());
+    var level = LevelState(); level.home_menu = false; level.overlay_open = overlayOpen;
+    Check(LevelUpGuard.CanUpgrade(Settings(), level), "observation surfaces permit leveling");
+}
 
 // Regression: invisible native operations must update the aquarium heart HUD,
 // including restoring a stale 4-heart display when authoritative data is zero.

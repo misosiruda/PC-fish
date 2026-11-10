@@ -49,6 +49,47 @@ class PlanningTests(unittest.TestCase):
         self.assertEqual(plan['action']['kind'], 'hold')
         self.assertEqual(len(plan['merge_protected_fish_ids']), 10)
 
+    def test_distant_rarity_or_mixed_star_model_is_never_selected_or_executed(self):
+        for change in ({'level': 3, 'species': 'higher'}, {'grade': 2}):
+            with self.subTest(change=change):
+                data = merge_example()
+                data['state']['fish'][0].update(change)
+                data['rules'][0]['parents'][0].update(change)
+                data['quotes'].append(quote('material', grade=2, value=1))
+                data['quotes'].append(quote('higher', value=1))
+                planner = Planner(Problem(data))
+                self.assertEqual(planner.run()['action']['kind'], 'hold')
+                with self.assertRaisesRegex(ValidationError, 'same stars, adjacent rarities'):
+                    planner.transitions(planner.p.state, Action('merge', tuple(f['id'] for f in data['state']['fish'])))
+
+    def test_adjacent_rarity_economic_model_can_merge(self):
+        data = merge_example()
+        for f in (data['state']['fish'][0], data['rules'][0]['parents'][0]):
+            f.update(level=2, species='higher')
+        data['quotes'].append(quote('higher', value=1))
+        self.assertEqual(self.run_plan(data)['action']['kind'], 'merge')
+
+    def test_pessimistic_economic_outcome_overrides_safe_client_forecast(self):
+        data = merge_example()
+        for f in (data['state']['fish'][0], data['rules'][0]['parents'][0]):
+            f.update(level=2, species='higher')
+        data['quotes'].append(quote('higher', value=1))
+        data['rules'][0]['outcomes'] = [
+            {'probability':.99, 'fish':result('merged', level=2, breeds=1)},
+            {'probability':.01, 'fish':result('downgrade', level=1, breeds=1)}]
+        data['quotes'].append(quote('downgrade', breeds=1, value=1000))
+        planner = Planner(Problem(data))
+        self.assertEqual(planner.run()['action']['kind'], 'hold')
+        with self.assertRaisesRegex(ValidationError, 'below highest material'):
+            planner.transitions(planner.p.state, Action('merge', tuple(f['id'] for f in data['state']['fish'])))
+
+    def test_same_rarity_and_grade_can_merge_different_species(self):
+        data = merge_example()
+        data['state']['fish'][0]['species'] = 'other'
+        data['rules'][0]['parents'][0]['species'] = 'other'
+        data['quotes'].append(quote('other', value=1))
+        self.assertEqual(self.run_plan(data)['action']['kind'], 'merge')
+
     def test_market_opportunity_cost_also_protects_expensive_materials(self):
         data = merge_example(True)
         data['config']['protect_merge_grade_at_least'] = 6

@@ -1,6 +1,7 @@
 """Explicit Season 2 unlisted cohort: estimates from observed legacy peers."""
 import math
 from .market_coverage import best_state
+from . import buy_orders
 
 # Season 2 announcement: 5 regular species plus 3 seasonal species (38--40).
 # The seasonal collection and recipe policies always own seasonal fish.
@@ -44,17 +45,17 @@ def observed_quote(quote, name, now, ttl):
                 seller_proceeds_krw=max(x['seller_proceeds_krw'] for x in best_samples))
 
 
-def peer_quotes(catalog, cache, now, ttl, new_cohort=None):
+def peer_quotes(catalog, cache, now, ttl, new_cohort=None, price_basis=None):
     peers = []
     excluded = NEW_COHORT | set(new_cohort or [])
     for entry in catalog:
         if entry.get('seasonal') or entry.get('species') in excluded or entry.get('level', 0) <= 0:
             continue
         for grade, name in enumerate(entry.get('market_names', []), 1):
-            q = observed_quote(cache.get(name), name, now, ttl)
+            q = (buy_orders.observed_quote if price_basis == buy_orders.BASIS else observed_quote)(cache.get(name), name, now, ttl)
             if q is not None:
                 peers.append(dict(q, species=entry['species'], grade=grade))
-            else:
+            elif price_basis != buy_orders.BASIS:
                 empty = cache.get(name)
                 if (isinstance(empty, dict) and empty.get('market_hash_name') == name and empty.get('currency_id') == 16
                         and empty.get('book_complete') is True and empty.get('coverage_version') == 2
@@ -69,15 +70,16 @@ def peer_quotes(catalog, cache, now, ttl, new_cohort=None):
 
 def reference_products(fish, catalog, cache, config, now, ttl):
     """Request comparable products from the catalog, including unowned fish."""
-    if config.get('market_merge_price_basis') != 'best_observed_breeds':
+    if config.get('market_merge_price_basis') not in ('best_observed_breeds', buy_orders.BASIS):
         return {}
+    quote_reader = buy_orders.observed_quote if config.get('market_merge_price_basis') == buy_orders.BASIS else observed_quote
     regular = NEW_REGULAR | set(config.get('_discovered_regular_species', []))
     excluded = NEW_COHORT | set(config.get('_discovered_cohort', []))
     targets = {(f['level'], f['grade']) for f in fish if f.get('species') in regular
                and not f.get('basic') and not f.get('seasonal') and not f.get('locked')
                and f['id'] not in config.get('reserved_ids', []) and f['species'] not in config.get('reserved_species', [])
                and 1 <= f['grade'] <= 5
-               and observed_quote(cache.get(f.get('market_hash_name')), f.get('market_hash_name'), now, ttl) is None}
+               and quote_reader(cache.get(f.get('market_hash_name')), f.get('market_hash_name'), now, ttl) is None}
     products = {}
     for entry in catalog:
         if entry.get('seasonal') or entry.get('species') in excluded or len(entry.get('market_names', [])) != 5:
@@ -92,8 +94,10 @@ def reference_products(fish, catalog, cache, config, now, ttl):
 
 def apply_estimate(fish, review, catalog, peers, config, now):
     regular = NEW_REGULAR | set(config.get('_discovered_regular_species', []))
-    if (config.get('market_merge_price_basis') != 'best_observed_breeds'
+    bid_basis = config.get('market_merge_price_basis') == buy_orders.BASIS
+    if (config.get('market_merge_price_basis') not in ('best_observed_breeds', buy_orders.BASIS)
             or fish.get('species') not in regular or fish.get('seasonal') or fish.get('basic')
+            or bid_basis and review.get('value_source') == buy_orders.BASIS
             or review.get('product_listings', 0) > 0):
         return review
     entries = {e['species']: e for e in catalog}
@@ -109,17 +113,18 @@ def apply_estimate(fish, review, catalog, peers, config, now):
                 and e.get('level') == fish['level'] and len(e.get('market_names', [])) == 5}
     missing = sorted(expected - {p['market_hash_name'] for p in matching})
     if missing:
-        return {**review, 'value_source':'unavailable', 'estimate_reason':'Waiting for complete selling-state coverage of comparable species',
+        return {**review, 'value_source':'unavailable', 'estimate_reason':('Waiting for highest buy orders of comparable species' if bid_basis else 'Waiting for complete selling-state coverage of comparable species'),
                 'estimate_missing_products':missing}
     matching = [p for p in matching if not p.get('no_listings')]
     if not matching:
         return {**review, 'value_source': 'unavailable', 'estimate_reason': 'No current same-rarity/star legacy peer quote'}
     price = max(p['seller_proceeds_krw'] for p in matching)
     state = 'release' if price <= config.get('market_min_seller_proceeds_krw', 1000) else 'keep'
-    return {**review, 'state': state, 'merge_state': state, 'value_source': SOURCE,
+    return {**review, 'state': state, 'merge_state': state, 'value_source': buy_orders.SOURCE if bid_basis else SOURCE,
             'estimated_seller_proceeds_krw': price, 'estimate_peer_count': len(matching),
             'estimate_peer_names': sorted(p['market_hash_name'] for p in matching),
             'checked_at': min(p['checked_at'] for p in matching),
             'valid_until': min(p['valid_until'] for p in matching),
-            'reason': 'Season 2 unlisted species: maximum observed best-state ask of same-rarity/star legacy peers',
+            'reason': ('Unlisted species: maximum net highest buy order of same-rarity/star legacy peers' if bid_basis
+                       else 'Season 2 unlisted species: maximum observed best-state ask of same-rarity/star legacy peers'),
             'merge_reason': 'Estimated peer maximum is at most threshold' if state == 'release' else 'Estimated peer maximum exceeds threshold'}

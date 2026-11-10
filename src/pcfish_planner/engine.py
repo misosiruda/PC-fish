@@ -8,6 +8,8 @@ import json
 import math
 from typing import Any
 
+from .merge_policy import merge_batch_allowed
+
 
 class ValidationError(ValueError):
     pass
@@ -373,9 +375,14 @@ class Planner:
         elif action.kind == 'merge':
             if len(parents) != 10 or any(not self.merge_eligible(f) for f in parents):
                 raise ValidationError("invalid merge action")
+            if not merge_batch_allowed([f.level for f in parents], [f.grade for f in parents]):
+                raise ValidationError("merge requires same stars, adjacent rarities and no downgrade risk")
         else:
             raise ValidationError("transition requires breed or merge")
         rule = self.rule(action.kind, parents)
+        if action.kind == 'merge' and not merge_batch_allowed(
+                [f.level for f in parents], [f.grade for f in parents], [o.fish['level'] for o in rule.outcomes]):
+            raise ValidationError("merge outcome model allows a result below highest material")
         completion = state.now + self.c.action_seconds
         if completion > self.end:
             raise ValidationError("action completes outside horizon")
@@ -436,7 +443,9 @@ class Planner:
             if self.merge_eligible(fish):
                 eligible.setdefault(fish.traits(), []).append(fish)
         for rule in self.p.rules.values():
-            if rule.kind != 'merge':
+            if rule.kind != 'merge' or not merge_batch_allowed(
+                    [traits[1] for traits in rule.parents], [traits[2] for traits in rule.parents],
+                    [o.fish['level'] for o in rule.outcomes]):
                 continue
             ids = []
             for traits, count in Counter(rule.parents).items():
@@ -446,7 +455,12 @@ class Planner:
                 ids.extend(f.id for f in available[:count])
             else:
                 actions.append(Action('merge', tuple(sorted(ids))))
-        if sum(len(group) for group in eligible.values()) >= 10 and not any(a.kind == 'merge' for a in actions):
+        merge_groups = Counter()
+        for traits, group in eligible.items():
+            merge_groups[traits[1:3]] += len(group)
+        has_merge_pool = any(merge_groups[(lower, grade)] + merge_groups[(lower + 1, grade)] >= 10
+                             for lower in range(1, 5) for grade in range(1, 6))
+        if has_merge_pool and not any(a.kind == 'merge' for a in actions):
             self.missing['joint_outcome_model_missing:merge'] += 1
         scored = {'breed': [], 'merge': []}
         if state.now + self.c.action_seconds > self.end:

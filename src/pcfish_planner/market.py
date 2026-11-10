@@ -21,18 +21,20 @@ from urllib.parse import quote
 from .unlisted_value import NEW_COHORT, apply_estimate, peer_quotes, reference_products
 from .season_discovery import SeasonDiscovery, fetch_official_news
 from .market_coverage import best_state
+from . import buy_orders
 
 APP_ID = 4842670
 CURRENCY = 16  # KRW; Steam's integer monetary fields use 100 units per won.
 
 
 class MarketUnavailable(ValueError):
-    def __init__(self, message, *, retry_after_seconds=900, product_specific=False, rate_limited=False, reason_code='unavailable'):
+    def __init__(self, message, *, retry_after_seconds=900, product_specific=False, rate_limited=False, reason_code='unavailable', observed_quote=None):
         super().__init__(message)
         self.retry_after_seconds = retry_after_seconds
         self.product_specific = product_specific
         self.rate_limited = rate_limited
         self.reason_code = reason_code
+        self.observed_quote = observed_quote
 
 
 def retry_delay(headers, now, fallback=3600):
@@ -78,7 +80,7 @@ def market_settings(config):
     merge_basis = config.get('market_merge_price_basis', 'exact_breeds')
     if (mode not in ('grade', 'market') or not finite(threshold) or threshold <= 0
             or not finite(ttl) or not 60 <= ttl <= 86400
-            or not finite(interval) or not 30 <= interval <= 3600 or merge_basis not in ('exact_breeds', 'full_breeds', 'best_observed_breeds')):
+            or not finite(interval) or not 30 <= interval <= 3600 or merge_basis not in ('exact_breeds', 'full_breeds', 'best_observed_breeds', buy_orders.BASIS)):
         raise MarketUnavailable('Invalid market protection settings')
     return mode, threshold, ttl, interval
 
@@ -145,7 +147,8 @@ def parse_query_data(query_data, name, now):
                     trades += row['purchases']
         return {'market_hash_name': name, 'checked_at': now, 'currency_id': CURRENCY,
                 'complete': complete, 'trades_30d': trades, 'samples': samples, 'source_url': listing_url(name),
-                'listing_total': total, 'listing_observed': len(listings), 'listing_has_more': page['more']}
+                'listing_total': total, 'listing_observed': len(listings), 'listing_has_more': page['more'],
+                'buy_order_proof': buy_orders.parse_proof(queries, name)}
     except MarketUnavailable:
         raise  # Preserve a specific diagnosis instead of catching our ValueError subclass.
     except (KeyError, TypeError, ValueError, StopIteration, IndexError, AttributeError) as exc:
@@ -153,6 +156,13 @@ def parse_query_data(query_data, name, now):
 
 
 def fetch_quote(name, **options):
+    if options.pop('price_basis', None) == buy_orders.BASIS:
+        from .browser_market import fetch_quote as fetch_page
+        quote = fetch_page(name)
+        if buy_orders.observed_quote(quote, name, time.time(), 86400) is None:
+            raise MarketUnavailable('Highest buy order or KRW fee evidence unavailable', product_specific=True,
+                                    reason_code='buy_order_unavailable', observed_quote=quote)
+        return quote
     from .market_states import fetch_quote as fetch_book
     return fetch_book(name, **options)
 
@@ -166,6 +176,8 @@ def review_fish(fish, quote_data, config, now):
                   merge_reason='Awaiting actual observed market listings' if config.get('market_merge_price_basis') == 'best_observed_breeds'
                   else 'Awaiting current full-breed listings')
     review.update(book_complete=False, coverage_version=0)
+    if config.get('market_merge_price_basis') == buy_orders.BASIS:
+        return buy_orders.review(fish, quote_data, config, now, review)
     q = quote_data
     if (not q or q.get('market_hash_name') != fish.get('market_hash_name') or q.get('currency_id') != CURRENCY
             or not finite(q.get('checked_at')) or not 0 <= now - q['checked_at'] < ttl):
@@ -301,6 +313,12 @@ class MarketMonitor:
                 self.rate_limit_failures = 0
                 self.next_request_at = now + interval
             except Exception as exc:
+                # Bid validation may fail after the page already proved that
+                # the product is listed. Keep that evidence for protection,
+                # without treating the failed lookup as a successful quote.
+                partial = exc.observed_quote if isinstance(exc, MarketUnavailable) else None
+                if isinstance(partial, dict) and partial.get('market_hash_name') == self.pending_name:
+                    self.cache[self.pending_name] = partial
                 observed_http = getattr(exc, 'http_responses_observed', 0)
                 limited = isinstance(exc, HTTPError) and exc.code in (403, 429) or getattr(exc, 'rate_limited', False)
                 delay = retry_delay(exc.headers, now) if isinstance(exc, HTTPError) and limited else getattr(exc, 'retry_after_seconds', 900)
@@ -361,7 +379,8 @@ class MarketMonitor:
                     isinstance(cached, dict) and cached.get('book_complete') is True and (
                         cached.get('coverage_version') == 2 or cached.get('coverage_version') == 3
                         and best_state(cached.get('best_state_proof'), name) is not None))
-                if needs_book or not isinstance(cached, dict) or not finite(cached.get('checked_at')) or not 0 <= now - cached['checked_at'] < ttl:
+                needs_bid = config.get('market_merge_price_basis') == buy_orders.BASIS and buy_orders.observed_quote(cached, name, now, ttl) is None
+                if needs_book or needs_bid or not isinstance(cached, dict) or not finite(cached.get('checked_at')) or not 0 <= now - cached['checked_at'] < ttl:
                     self.pending_name = name
                     self.pending_id = uuid.uuid4().hex
                     self.pending_started_at = now
@@ -375,7 +394,8 @@ class MarketMonitor:
                     if self.fetch is fetch_quote:
                         config_path = self.runtime.parent / 'config' / 'pcfish-automation.json'
                         options = dict(progress_root=self.runtime / 'market-book-progress',
-                                       control_config=config_path if config_path.exists() else None)
+                                       control_config=config_path if config_path.exists() else None,
+                                       price_basis=config.get('market_merge_price_basis'))
                     self.future = self.executor.submit(self.fetch, name, **options)
                     self.next_request_at = now + interval
                     # Persist request throttle before another process/session can start.
@@ -383,13 +403,15 @@ class MarketMonitor:
                                                                'attempts': self.attempts, 'failures': self.failures,
                                                                'next_request_at': self.next_request_at, 'rate_limit_failures': self.rate_limit_failures})
                     break
-        peers = peer_quotes(catalog, self.cache, now, ttl, cohort)
+        peers = peer_quotes(catalog, self.cache, now, ttl, cohort, config.get('market_merge_price_basis'))
         reviews = [apply_estimate(f, review_fish(f, self.cache.get(f.get('market_hash_name')), config, now),
                                   catalog, peers, config, now) for f in fish if not f['basic']]
         report = {'schema_version': 1, 'session': snapshot['session'], 'config_digest': snapshot['config_digest'],
-                  'lookup_backend': 'steam_public_state_partition' if self.fetch is fetch_quote else 'custom',
+                  'lookup_backend': ('steam_public_buy_order' if config.get('market_merge_price_basis') == buy_orders.BASIS
+                                     else 'steam_public_state_partition') if self.fetch is fetch_quote else 'custom',
                   'merge_price_basis': config.get('market_merge_price_basis', 'exact_breeds'),
-                  'captured_at': now, 'price_basis': 'matching seller ask after fees; not an executed sale',
+                  'captured_at': now, 'price_basis': ('highest buy order after fees; not an executed sale'
+                      if config.get('market_merge_price_basis') == buy_orders.BASIS else 'matching seller ask after fees; not an executed sale'),
                   'next_request_at': self.next_request_at, 'lookup_in_progress': self.future is not None,
                   'suspended_for_pending_result': suspended,
                   'error': self.error, 'product_failures': self.failures, 'fish': reviews, 'peer_quotes': peers,
