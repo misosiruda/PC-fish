@@ -12,14 +12,14 @@ internal static class SameGroupMergeTests
             var fish = Enumerable.Range(0, 10).Select(i => new FishState
             {
                 id = i.ToString(), species = "species" + i % 2, level = 3, grade = 1,
-                remaining_breeds = i % 4, market_state = "release", market_valid_until = 2000,
+                remaining_breeds = 0, market_state = "release", market_valid_until = 2000,
                 market_merge_state = "release", market_merge_valid_until = 2000
             }).ToArray();
             var snapshot = new Snapshot { captured_at = 1000, capacity = 999, fish = fish };
             var command = new Command { request_id = Guid.NewGuid().ToString(), kind = "merge",
                 fish_ids = fish.Select(f => f.id).ToArray() };
             ExecutionGuard.Validate(command, snapshot, cfg);
-            check(true, $"same rarity/stars across species and remaining uses: {mode}/{protection}");
+            check(true, $"same rarity/stars across exhausted species: {mode}/{protection}");
             foreach (var mismatch in new[] { "rarity", "stars" })
             {
                 if (mismatch == "rarity") fish[9].level = 1;

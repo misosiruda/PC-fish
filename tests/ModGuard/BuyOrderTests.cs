@@ -49,7 +49,7 @@ internal static class BuyOrderTests
             MarketProtection.Apply(f, r, cfg, "test", "cfg", 1100);
             check(f.market_state == "pending" && f.market_merge_state == "pending", "invalid buy order protected: " + bad);
         }
-        var materials = Enumerable.Range(0,10).Select(i => { var f=Fish(); MarketProtection.Apply(f,Report(),cfg,"test","cfg",1100); f.id=i.ToString();return f; }).ToArray();
+        var materials = Enumerable.Range(0,10).Select(i => { var f=Fish(); MarketProtection.Apply(f,Report(),cfg,"test","cfg",1100); f.id=i.ToString();f.remaining_breeds=0;return f; }).ToArray();
         var s = new Snapshot { captured_at=1100, capacity=999, fish=materials };
         var cmd = new Command { request_id=Guid.NewGuid().ToString(), kind="merge", fish_ids=materials.Select(f=>f.id).ToArray() };
         ExecutionGuard.Validate(cmd,s,cfg);check(true,"highest-bid release reaches execution");

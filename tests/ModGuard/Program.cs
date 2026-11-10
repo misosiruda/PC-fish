@@ -1,6 +1,13 @@
 using PCFish.Automation;
 
+if (args.Length == 3 && args[0] == "--policy-replay")
+{
+    PolicyReplay.Run(args[1], args[2]);
+    return;
+}
+
 int checkedCases = 0;
+SeasonStockTests.Run((pass, scenario) => { if (!pass) throw new Exception(scenario); checkedCases++; });
 SameGroupMergeTests.Run((pass, scenario) => { if (!pass) throw new Exception(scenario); checkedCases++; });
 BuyOrderTests.Run((pass, scenario) => { if (!pass) throw new Exception(scenario); checkedCases++; });
 SeasonPriorityTests.Run((pass, scenario) => { if (!pass) throw new Exception(scenario); checkedCases++; });
@@ -54,8 +61,7 @@ foreach (var f in materials) f.remaining_breeds = 0;
 var merge = new Command { request_id = Guid.NewGuid().ToString(), kind = "merge", fish_ids = materials.Select(f => f.id).ToArray() };
 var full = new Snapshot { hearts = 0, capacity = 10, fish = materials };
 ExecutionGuard.Validate(merge, full, Settings()); checkedCases++;
-materials[0].remaining_breeds = 3;
-ExecutionGuard.Validate(merge, full, Settings()); checkedCases++;
+Reject(() => materials[0].remaining_breeds = 3, merge, full, Settings());
 materials[0].remaining_breeds = 0;
 Reject(() => materials[0].basic = true, merge, full, Settings());
 

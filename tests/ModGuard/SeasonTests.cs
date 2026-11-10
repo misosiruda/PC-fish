@@ -5,7 +5,7 @@ internal static class SeasonTests
     internal static void Run(Action<bool, string> check)
     {
         Settings Config() => new() { enabled = true, mode = "protected", auto_season_craft = true,
-            season_target_grade = 2, protection_mode = "market" };
+            season_target_grade = 2, season_goal = "highest", protection_mode = "market" };
         FishState Fish(string id, string species, int grade = 1, bool seasonal = false) => new()
         { id = id, species = species, grade = grade, level = 2, seasonal = seasonal, ready = true,
             remaining_breeds = 0, market_state = "release", market_valid_until = 9999 };
@@ -15,9 +15,9 @@ internal static class SeasonTests
             new() { season = 2, species = "S", grade = 2, ingredients = [
                 new() { species = "S", grade = 1, amount = 1, seasonal = true }, new() { species = "B", grade = 2, amount = 2 }] }
         ];
-        Snapshot State() => new() { captured_at = 1000, capacity = 100, hearts = 1, season = new()
+        Snapshot State() => new Snapshot { captured_at = 1000, capacity = 100, hearts = 1, season = new()
         { id = 2, active = true, starts_at = 100, ends_at = 10000, recipes = Recipes() },
-            fish = [Fish("a", "A"), Fish("b1", "B"), Fish("b2", "B"), Fish("b3", "B"), Fish("b4", "B", 2), Fish("b5", "B", 2)] };
+            fish = [Fish("a", "A"), Fish("b1", "B"), Fish("b2", "B"), Fish("b3", "B"), Fish("b4", "B", 2), Fish("b5", "B", 2)] }.WithCatalog();
         Command Craft(SeasonPlan plan) => new() { request_id = Guid.NewGuid().ToString(), kind = "craft",
             season = plan.next_craft!.season, target_species = plan.next_craft.species,
             target_grade = plan.next_craft.grade, fish_ids = plan.next_craft.fish_ids };
@@ -96,11 +96,12 @@ internal static class SeasonTests
         }
         s = State(); cfg = Config(); s.fish[0].market_state = "pending";
         plan = SeasonPolicy.Build(s, cfg);
-        check(plan.state == "waiting" && plan.reserved_ids.Contains("a"), "unknown-price materials reserved while quote is pending");
+        check(plan.state == "waiting" && plan.needs.Any(n => n.species == "A" && n.missing == 1), "unknown-price materials are unavailable and remain protected by market guard");
         s = State(); s.fish[0].remaining_breeds = 3;
         s.fish = s.fish.Append(Fish("a-exhausted", "A")).ToArray();
         plan = SeasonPolicy.Build(s, cfg);
-        check(plan.reserved_ids.Contains("a-exhausted") && !plan.reserved_ids.Contains("a"), "prefer exhausted materials and keep useful parents");
+        check(plan.next_craft!.fish_ids.Contains("a-exhausted") && !plan.next_craft.fish_ids.Contains("a")
+            && plan.parent_ids.Contains("a"), "prefer exhausted craft material and preserve useful parent");
         s = State(); s.fish = s.fish.Where(f => f.species != "A").Append(Fish("s1", "S", 1, true)).ToArray();
         plan = SeasonPolicy.Build(s, cfg); cmd = Craft(plan);
         check(cmd.target_grade == 2 && cmd.fish_ids.Contains("s1") && plan.needs.Length == 1, "owned precursor avoids rebuilding earlier stage");
@@ -115,13 +116,13 @@ internal static class SeasonTests
         s = State(); cfg = Config(); cfg.season_goal = "collection";
         s.fish = s.fish.Append(Fish("kept-s1", "S", 1, true)).ToArray();
         plan = SeasonPolicy.Build(s, cfg);
-        check(plan.next_craft!.grade == 1 && !plan.next_craft.fish_ids.Contains("kept-s1"), "collection keeps one of each grade while building extra precursor");
-        check(plan.reserved_ids.Contains("kept-s1"), "collection goal fish stay reserved");
+        check(plan.next_craft!.grade == 2 && plan.next_craft.fish_ids.Contains("kept-s1"), "collection upgrades the last lower grade before refilling it");
+        check(plan.reserved_ids.Contains("kept-s1"), "current upgrade ingredient stays reserved from ordinary merge");
         s = State(); cfg = Config(); cfg.season_target_count = 2;
         plan = SeasonPolicy.Build(s, cfg);
         check(plan.needs.Sum(n => n.required) == 10 && plan.needs.Sum(n => n.missing) == 4, "multi-copy quota uses inventory once without double counting");
         s = State(); cfg = Config(); s.season!.active = false;
-        check(SeasonPolicy.Build(s, cfg).state == "inactive" && SeasonPolicy.Build(s, cfg).reserved_ids.Length == 0, "season end releases ordinary recipe reservations");
+        check(SeasonPolicy.Build(s, cfg).state == "inactive" && SeasonPolicy.Build(s, cfg).stock.Length > 0, "season end switches to per-species grade stockpiling");
         s.season.error = "unknown";
         check(SeasonPolicy.Build(s, cfg).state == "unavailable", "unknown season state fails closed");
         Rejected(breed, s, cfg, "unknown table blocks regular consumption too");

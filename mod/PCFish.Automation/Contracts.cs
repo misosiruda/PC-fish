@@ -33,6 +33,8 @@ internal static class ExecutionGuard
             if (!c.auto_merge || selected.Length != 10 || selected.Any(f => f.basic || f.level < 1)) throw new InvalidDataException("Merge conditions changed");
             if (!MergePolicy.Allows(selected))
                 throw new InvalidDataException("Merge requires same stars, adjacent rarities and no downgrade risk");
+            if (!StockPolicy.AllowsMerge(selected, s, c, seasonPlan))
+                throw new InvalidDataException("Merge must preserve stock and parents, target missing materials or meet per-species triple surplus; exhausted fish first");
         }
         else throw new InvalidDataException("Unsupported action");
     }
@@ -183,7 +185,7 @@ internal sealed class Settings
     public bool auto_merge { get; set; } = true;
     public bool auto_level_up { get; set; } = true;
     public bool auto_season_craft { get; set; }
-    public string season_goal { get; set; } = "highest";
+    public string season_goal { get; set; } = "collection";
     public int season_target_grade { get; set; } = 5;
     public int season_target_count { get; set; } = 1;
     public string[] season_species_priority { get; set; } = ["FS00040", "FS00039", "FS00038"];
@@ -275,6 +277,7 @@ internal sealed class Snapshot
     public string ui_block_reason { get; set; } = "";
     public FishState[] fish { get; set; } = [];
     public MarketCatalogEntry[] market_catalog { get; set; } = [];
+    public SpeciesInfo[] species_catalog { get; set; } = [];
     public SeasonState season { get; set; } = null!;
 }
 internal sealed class Command

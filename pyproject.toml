@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pcfish-planner"
-version = "0.4.32"
+version = "0.5.0"
 description = "Economic breeding planner and local IL2CPP automation bridge for PC FISH"
 requires-python = ">=3.12"
 dependencies = []

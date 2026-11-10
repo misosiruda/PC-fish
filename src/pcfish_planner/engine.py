@@ -422,12 +422,19 @@ class Planner:
                 and fish.grade < self.c.protect_merge_grade_at_least
                 and (self.c.allow_seasonal_merge or not fish.seasonal))
 
+    def action_allowed(self, state: State, action: Action) -> bool:
+        """Adapters can constrain candidates before pruning or search."""
+        return True
+
+    def parent_order(self, fish: Fish) -> tuple:
+        return (-fish.level, -fish.remaining_breeds, fish.grade, fish.id)
+
     def candidates(self, state: State) -> list[tuple[Action, tuple]]:
         actions = []
         ready = [f for f in state.fish if f.can_breed(state.now)]
         # Two interchangeable representatives suffice for a pair; retain earlier-ready fish.
         groups: dict[tuple, list[Fish]] = {}
-        for fish in sorted(ready, key=lambda f: (-f.level, -f.remaining_breeds, f.grade, f.id)):
+        for fish in sorted(ready, key=self.parent_order):
             bucket = groups.setdefault(fish.traits(), [])
             if len(bucket) < 2:
                 bucket.append(fish)
@@ -466,6 +473,8 @@ class Planner:
         if state.now + self.c.action_seconds > self.end:
             return []
         for action in actions:
+            if not self.action_allowed(state, action):
+                continue
             try:
                 transitions = self.transitions(state, action)
             except MissingData as exc:

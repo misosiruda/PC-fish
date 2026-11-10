@@ -14,7 +14,8 @@ class SeasonBridgeTests(unittest.TestCase):
     def state(self):
         s = snapshot([live_fish('a'), live_fish('b')])
         s['season'] = {'id': 2, 'plan': {'state': 'waiting', 'reason': 'Saving ingredients',
-                                      'reserved_ids': ['a'], 'needs': [], 'next_craft': None}}
+                                      'policy_version': 2, 'reserved_ids': ['a'], 'exhausted_ids': [], 'surplus_ids': [], 'parent_ids': [],
+                                      'needs': [dict(species='child', level=4, grade=1, required=1, reserved=0, missing=1)], 'next_craft': None}}
         return s
 
     def test_reserved_material_can_breed_without_overriding_manual_reservations(self):
@@ -56,8 +57,11 @@ class SeasonBridgeTests(unittest.TestCase):
     def test_reserved_material_cannot_be_merged(self):
         s = self.state()
         s['fish'] = [live_fish('a' if i == 0 else str(i), level=1, breeds=0) for i in range(10)]
+        s['season']['plan']['exhausted_ids'] = [f['id'] for f in s['fish'] if f['id'] != 'a']
+        s['season']['plan']['needs'][0].update(level=2)
         self.assertNotEqual(decide(s, {**CONFIG, 'auto_season_craft': True}, 0)['kind'], 'merge')
         s['season']['plan']['reserved_ids'] = []
+        s['season']['plan']['exhausted_ids'] = [f['id'] for f in s['fish']]
         self.assertEqual(decide(s, {**CONFIG, 'auto_season_craft': True}, 0)['kind'], 'merge')
 
     def test_craft_precedes_regular_actions_and_carries_recipe_identity(self):
@@ -124,9 +128,12 @@ class SeasonBridgeTests(unittest.TestCase):
         for item in s['fish']:
             item['species'] = 'material'
         s['season']['plan']['reserved_ids'] = ['material0']
+        s['season']['plan']['exhausted_ids'] = [f['id'] for f in s['fish'] if f['id'] != 'material0']
+        s['season']['plan']['needs'][0].update(species='merged', level=2)
         with patch('pcfish_planner.bridge.read_json', return_value=model):
             self.assertNotEqual(decide(s, cfg, 0)['kind'], 'merge')
             s['season']['plan']['reserved_ids'] = []
+            s['season']['plan']['exhausted_ids'] = [f['id'] for f in s['fish']]
             self.assertEqual(decide(s, cfg, 0)['kind'], 'merge')
 
     def test_worker_writes_craft_command_and_keeps_craft_events_out_of_learning(self):

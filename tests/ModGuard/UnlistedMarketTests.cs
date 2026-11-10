@@ -73,6 +73,7 @@ internal static class UnlistedMarketTests
         var state = new Snapshot { session = "test", captured_at = 1100, capacity = 999, hearts = 1,
             season = new(), fish = Enumerable.Range(0, 10).Select(i => Fish(i.ToString())).ToArray() };
         foreach (var material in state.fish) MarketProtection.Apply(material, Report(material.id), cfg, "test", "cfg", 1100, catalog);
+        foreach (var material in state.fish) material.remaining_breeds = 0;
         var cmd = new Command { kind = "merge", request_id = Guid.NewGuid().ToString(), fish_ids = state.fish.Select(x => x.id).ToArray() };
         ExecutionGuard.Validate(cmd, state, cfg); check(true, "estimated low-value fish can actually pass native merge guard");
         foreach (var protect in new[] { "lock", "reservation", "season", "expiry" })
@@ -87,6 +88,7 @@ internal static class UnlistedMarketTests
         cfg.auto_season_craft = true; cfg.season_target_grade = 1;
         state.season = new() { id = 2, active = true, starts_at = 1, ends_at = 10000, recipes = [new()
             { season = 2, species = "SEASONAL", grade = 1, ingredients = [new() { species = "FS00041", grade = 1, amount = 1 }] }] };
+        state.WithCatalog();
         bool recipeDenied = false; try { ExecutionGuard.Validate(cmd, state, cfg); } catch (InvalidDataException) { recipeDenied = true; }
         check(recipeDenied, "estimated material still belongs to native exact season reservation");
 

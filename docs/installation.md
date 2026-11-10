@@ -1,6 +1,6 @@
 # 설치·업데이트·제거
 
-이 안내는 **PC FISH Automation 0.4.32 / Windows x64** 기준이다. PowerShell 명령은 **PowerShell 7**에서 실행한다.
+이 안내는 **PC FISH Automation 0.5.0 / Windows x64** 기준이다. PowerShell 명령은 **PowerShell 7**에서 실행한다.
 
 ## 지원 환경과 다운로드
 
@@ -13,12 +13,12 @@
 | 명령 실행 | PowerShell 7 |
 | 소스 빌드만 | .NET 8 SDK, 해당 게임에서 생성한 BepInEx interop 참조 |
 
-[GitHub 릴리즈](https://github.com/misosiruda/PC-fish/releases/tag/v0.4.32)에서 `PCFish-Automation-v0.4.32-win-x64.zip`과 `SHA256SUMS.txt`를 받는다. ZIP에는 빌드된 DLL과 계획기 소스가 함께 들어 있다. DLL만 복사하면 Python 계획기가 실행되지 않는다.
+[GitHub 릴리즈](https://github.com/misosiruda/PC-fish/releases/tag/v0.5.0)에서 `PCFish-Automation-v0.5.0-win-x64.zip`과 `SHA256SUMS.txt`를 받는다. ZIP에는 빌드된 DLL과 계획기 소스가 함께 들어 있다. DLL만 복사하면 Python 계획기가 실행되지 않는다.
 
 다운로드한 ZIP의 체크섬을 `SHA256SUMS.txt`와 비교한다.
 
 ```powershell
-Get-FileHash '.\PCFish-Automation-v0.4.32-win-x64.zip' -Algorithm SHA256
+Get-FileHash '.\PCFish-Automation-v0.5.0-win-x64.zip' -Algorithm SHA256
 ```
 
 Python은 [공식 다운로드](https://www.python.org/downloads/windows/), Chrome은 [공식 다운로드](https://www.google.com/chrome/), PowerShell은 [Microsoft 설치 안내](https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-windows)를 따른다. BepInEx는 [공식 빌드 목록](https://builds.bepinex.dev/projects/bepinex_be)의 **#793 / Unity.IL2CPP-win-x64**를 사용한다. Mono·x86용을 선택하지 않는다. 로더 초기 실행 과정은 [공식 IL2CPP 설치 안내](https://docs.bepinex.dev/master/articles/user_guide/installation/unity_il2cpp.html)에도 나와 있다.
@@ -66,7 +66,7 @@ $fishConfig | ConvertTo-Json -Depth 10 | Set-Content '.\mod\pcfish-automation.js
 
 ## 기존 버전에서 업데이트
 
-1. `Set-Automation.ps1 -Mode Pause`로 새 작업을 멈추고, 상태의 `in_flight=false`, `uncertain=false`를 확인한 뒤 게임을 정상 종료한다. 미확정 요청이 있으면 기록을 지우지 말고 [문제 확인](#문제-확인)을 따른다.
+1. 새 작업을 멈추고, 상태의 `in_flight=false`, `uncertain=false`와 빈 `pending_id`를 확인한 뒤 게임을 정상 종료한다. 요청이 없는 상태에서는 `Set-Automation.ps1 -Mode Pause`를 사용한다. 진행 중인 교배가 있으면 아래처럼 새 작업만 끄고 결과 확인을 마친 다음 일시정지한다. 미확정 요청 기록은 삭제하지 않는다.
 2. 기존 프로젝트 폴더와 설치된 DLL·설정을 별도로 백업한다. `var\mod-installation.json` 및 이 파일이 가리키는 백업 폴더를 보존한다.
 3. 새 ZIP을 **기존 프로젝트 폴더에** 덮어 푼다. ZIP은 `.venv`, `var`, `work`, 게임 폴더의 실행 기록을 포함하지 않는다.
 4. 아래 명령으로 Python 의존성과 DLL을 업데이트한다. 이미 설치된 로더는 다시 설치하지 않는다.
@@ -77,13 +77,17 @@ $fishConfig | ConvertTo-Json -Depth 10 | Set-Content '.\mod\pcfish-automation.js
 ```
 
 5. 게임의 `BepInEx\config\pcfish-automation.json`에서 `python_path`와 `project_root`를 확인한다. 프로젝트 위치를 바꿨다면 이 경로도 변경해야 한다. 기존 보호 정책·시즌 목표·잠금은 자동 변경하지 않는다.
-6. 게임을 실행하고 `Set-Automation.ps1 -Mode Status`에서 `version=0.4.32`와 계획기 상태를 확인한다. 현재 기본 시세 정책으로 재개하려면 다음 명령을 사용한다.
+6. 게임을 실행하고 `Set-Automation.ps1 -Mode Status`에서 `version=0.5.0`와 계획기 상태를 확인한다. 현재 기본 시세 정책으로 재개하려면 다음 명령을 사용한다.
 
 ```powershell
 & '.\scripts\Set-Automation.ps1' -Mode Protected -Protection Market -MergePriceBasis HighestBuyOrder -GameRoot $fishGameRoot
 ```
 
 `$fishGameRoot`는 처음 설치 예시처럼 실제 게임 경로로 먼저 지정한다. 시즌 목표까지 바꾸려면 [시즌 설정](season-crafting.md#목표-설정)을 참고한다. DLL 변경은 게임 재시작이 필요하고, `Set-Automation.ps1`의 정책 변경은 실행 중 반영된다.
+
+### 진행 중인 교배 결과를 기다릴 때
+
+`Pause` 상태에서는 원래 게임 교배의 지연 재고 확인도 멈출 수 있다. 이 경우 실제 설정을 백업한 뒤 `enabled=true`, `mode=protected`를 유지하고 `auto_breed`, `auto_merge`, `auto_season_craft`, `auto_level_up`을 모두 `false`로 바꾸면 새 소비 작업 없이 결과 확인을 진행한다. 요청이 정리되면 `Pause`로 전환하고 정상 종료한다. 업데이트 후 백업한 자동화 선택값을 복원한다. `uncertain=true`가 지속되면 임의로 요청을 재전송하거나 기록을 지우지 말고 원인을 확인한다.
 
 ## 제거와 되돌리기
 

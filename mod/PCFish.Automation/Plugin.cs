@@ -20,7 +20,7 @@ using UnityEngine;
 
 namespace PCFish.Automation;
 
-[BepInPlugin("local.pcfish.automation", "PC FISH Automation", "0.4.32")]
+[BepInPlugin("local.pcfish.automation", "PC FISH Automation", "0.5.0")]
 public sealed partial class Plugin : BasePlugin
 {
     internal static Plugin Current = null!;
@@ -138,7 +138,7 @@ public sealed partial class Plugin : BasePlugin
         }
     }
     void Status(string state, object extra = null) => Atomic(Path.Combine(root, "status.json"), new
-    { version = "0.4.32", session, captured_at = Now, state, message, in_flight = inFlight, uncertain, pending_id = pendingId,
+    { version = "0.5.0", session, captured_at = Now, state, message, in_flight = inFlight, uncertain, pending_id = pendingId,
         native_breed_retry = nativeBreedRetry,
         native_comparison = nativeComparison,
         native_breed_flow = NativeBreedRequest ? recovery.flow : "",
@@ -324,6 +324,10 @@ public sealed partial class Plugin : BasePlugin
                     catalog.Add(new() { species = row.Type, level = row.Level, seasonal = row.Season > 0,
                         market_names = Enumerable.Range(1, 5).Select(g => MarketName(row.Type, g)).ToArray() });
         var marketCatalog = catalog.ToArray();
+        var speciesCatalog = new List<SpeciesInfo>();
+        if (types != null)
+            foreach (var row in types.Values)
+                if (row.Level > 0) speciesCatalog.Add(new() { species = row.Type, name = FishName(row.Type), level = row.Level, seasonal = row.Season > 0 });
         MarketReport market = null;
         if (cfg.protection_mode == "market")
         {
@@ -374,12 +378,12 @@ public sealed partial class Plugin : BasePlugin
         bool levelPopupOpen = levelPopup != null && levelPopup.gameObject.activeInHierarchy;
         var season = CaptureSeason();
         string revision = Digest(JsonSerializer.Serialize(new { fish, hearts = data.breedCount, timestamp = data.breedTimestamp, level = data.tankLevel, exp = data.tankExp,
-            season.id, season.active, season.starts_at, season.ends_at, season.error, season.recipes,
+            season.id, season.active, season.starts_at, season.ends_at, season.error, season.recipes, species_catalog = speciesCatalog,
             retry_breeding = nativeBreedRetry.pending && nativeBreedRetry.account_context_hash == AccountContext() }));
         string blockReason = UiActivityGuard.BlockReason(networkBusy, confirm, levelPopupOpen, windowOpen, overlayOpen);
         bool busy = blockReason.Length != 0;
         var snapshot = new Snapshot { session = session, revision = revision, config_digest = configDigest, captured_at = Now, season = season,
-            fish = fish, market_catalog = marketCatalog, hearts = data.breedCount, next_heart_at = GameClock.NextHeartAt(data.breedTimestamp, GameConfig.CF_BREED_COUNT_INTERVAL),
+            fish = fish, market_catalog = marketCatalog, species_catalog = speciesCatalog.ToArray(), hearts = data.breedCount, next_heart_at = GameClock.NextHeartAt(data.breedTimestamp, GameConfig.CF_BREED_COUNT_INTERVAL),
             capacity = GameConfig.CF_FISH_MAX_COUNT, ui_busy = busy, request_in_flight = inFlight, uncertain = uncertain,
             tank_level = data.tankLevel, tank_exp = data.tankExp, next_level_exp = nextExp, max_tank_level = maxLevel,
             max_tank_exp = GameConfig.CF_TANK_MAX_EXP, next_level_reward_fish_ids = rewardIds,
