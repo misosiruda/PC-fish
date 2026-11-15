@@ -30,7 +30,7 @@ class StockPolicyTests(unittest.TestCase):
                   live_fish('high-a', level=5), live_fish('high-b', level=5)]
         plan = decide(policy_state(fishes, [need(1)]), CFG, 0)
         self.assertEqual((plan['kind'], set(plan['fish_ids'])), ('breed', {'low-a', 'low-b'}))
-        self.assertEqual(plan['objective'], 'material_rarity_progress')
+        self.assertEqual(plan['objective'], 'material_and_parent_progress')
         self.assertIsNone(plan['profit_estimate'])
 
     def test_low_parents_survive_large_high_rarity_pool(self):
