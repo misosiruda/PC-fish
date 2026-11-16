@@ -55,8 +55,8 @@ def main() -> None:
     files[dll_path] = dll
     manifest = {
         "version": version, "tag": f"v{version}", "source_commit": commit,
-        "platform": "windows-x64", "game_version": "1.6.2", "steam_build": "26315872",
-        "game_assembly_sha256": "F5F98F82FE2FED5F177B440DF07C9084C814EB8C5C9A141661A67FF184149F93",
+        "platform": "windows-x64", "game_version": "1.7.0", "steam_build": "26614171",
+        "game_assembly_sha256": "832C9EB6DB770DE6F489BAA6EAAA84A45BBFBABB31895757DDD4EA92D26A0E7F",
         "loader": "BepInEx 6.0.0-be.793+dbc82f0 Unity.IL2CPP-win-x64",
         "files": {name: {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()} for name, data in sorted(files.items())},
     }

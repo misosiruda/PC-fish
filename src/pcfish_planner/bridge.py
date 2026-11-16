@@ -23,6 +23,7 @@ from .probabilities import breed_level_probabilities, merge_level_probabilities
 from .market import MarketMonitor, market_settings
 from .merge_policy import merge_batch_allowed
 from .stock_policy import validate_plan as validate_stock_plan, rarity_weights, merge_allowed, merge_utility, material_gain
+from .breeding_policy import MaterialScorer, ObservationModel
 
 
 def atomic(path: Path, value: dict) -> None:
@@ -162,6 +163,10 @@ def validate_snapshot(s: dict) -> None:
 
 
 def protected_plan(s: dict, config: dict) -> dict:
+    if config.get('_stock_plan') and '_material_scorer' not in config:
+        parents = [f for f in s['fish'] if config.get('auto_breed', True) and not protected(f, config, s['captured_at'])
+                   and ((f['basic'] and f['ready']) or (not f['basic'] and f['remaining_breeds'] > 0))]
+        config = {**config, '_material_scorer': MaterialScorer(s, config, parents)}
     # Spend a full heart before routine inventory reduction so repeated merges
     # cannot starve breeding and waste regeneration. Season crafts are handled
     # separately by decide() and keep their existing precedence.
@@ -180,6 +185,7 @@ def protected_plan(s: dict, config: dict) -> dict:
 
 def _protected_merge_plan(s: dict, config: dict) -> dict | None:
     now = s['captured_at']
+    scorer = config.get('_material_scorer')
     if config.get('auto_merge', True):
         materials = [f for f in s['fish'] if not f['basic'] and f['level'] > 0
                      and not protected(f, config, now, action='merge')
@@ -207,22 +213,31 @@ def _protected_merge_plan(s: dict, config: dict) -> dict | None:
                         if ids not in seen and merge_batch_allowed([f['level'] for f in batch], [f['grade'] for f in batch]):
                             batches.append(batch)
                             seen.add(ids)
+        if scorer:
+            # Surplus reduction remains available independently of material gain.
+            surplus = set(config['_stock_plan']['surplus_ids'])
+            batches = [b for b in batches if scorer.batch('merge', b)['score'] > 0
+                       or all(f['id'] in surplus for f in b)]
         if batches:
-            batch = max(batches, key=lambda b: (merge_utility(config, b),
+            batch = max(batches, key=lambda b: (scorer.batch('merge', b)['score'] if scorer else merge_utility(config, b),
                         -max((len(set(f['id'] for f in b) & ids) for ids in rejected), default=0),
                         len({f['level'] for f in b}) == 1, -sum(f['remaining_breeds'] for f in b), sum(f['level'] for f in b)))
-            return {'kind': 'merge', 'fish_ids': [f['id'] for f in batch],
+            result = {'kind': 'merge', 'fish_ids': [f['id'] for f in batch],
                     'reason': 'Preserve stock and parents; exhausted materials target missing rarity, or same-rarity triple-surplus batch with exhausted fish first',
                     'forecast_levels': merge_level_probabilities([f['level'] for f in batch]),
-                    'objective': 'material_rarity_progress' if config.get('_stock_plan') else 'protected_rarity_progress', 'profit_estimate': None}
+                    'objective': 'material_and_parent_progress' if scorer else 'protected_rarity_progress', 'profit_estimate': None}
+            if scorer:
+                result['material_evaluation'] = scorer.batch('merge', batch)
+                result['reason'] = 'Preserve reserved materials; evaluate result rarity/stars and future parent capacity'
+            return result
     return None
 
 
 def _protected_breed_plan(s: dict, config: dict) -> dict:
     """Bounded known-parent lookahead; utility is rarity progress, never money.
 
-    Newborn species/Grade and starter regrowth times are unknown: do not invent
-    them. Replan immediately after every actual outcome instead.
+    Replan after actual results. Future-parent scores never create hypothetical
+    fish IDs or make offspring available inside the known-parent lookahead.
     """
     now = s['captured_at']
     pool = [f for f in s['fish'] if not protected(f, config, now)]
@@ -235,19 +250,19 @@ def _protected_breed_plan(s: dict, config: dict) -> dict:
     rejected_ids = {id for pair in rejected for id in pair}
     buckets = defaultdict(list)
     for f in sorted(candidates, key=lambda f: (-f['level'], max(0, f['ready_at'] - now), -f['remaining_breeds'], f['id'] in rejected_ids, f['id'])):
-        key = (f['level'], f['remaining_breeds'], f['ready_at'], f['basic'])
+        key = (f['level'], f['grade'], f['remaining_breeds'], f['ready_at'], f['basic'])
         # Rejected identities are no longer interchangeable. Retain them as
         # separate candidates along with two representatives never rejected.
         if len(buckets[key]) < 2 or f['id'] in rejected_ids:
             buckets[key].append(f)
-    by_level = defaultdict(list)
+    by_profile = defaultdict(list)
     for bucket in buckets.values():
         for f in bucket:
-            by_level[f['level']].append(f)
+            by_profile[f['level'], f['grade']].append(f)
     # Keep representatives from EVERY rarity: high-only truncation can discard
     # the low-rarity parents needed for current material shortages.
     candidates = []
-    for _, group in sorted(by_level.items()):
+    for _, group in sorted(by_profile.items()):
         representatives = [f for f in group if f['id'] not in rejected_ids][:2]
         representatives += [f for f in group if f not in representatives][:4 - len(representatives)]
         candidates.extend(representatives)
@@ -258,6 +273,14 @@ def _protected_breed_plan(s: dict, config: dict) -> dict:
     weights = rarity_weights(config)
     utility = {(a, b): sum(weights[level] * p for level, p in breed_level_probabilities(a, b).items())
                for a in range(6) for b in range(6)}
+    scorer = config.get('_material_scorer')
+    pair_scores = {}
+    for i, j in combinations(range(len(candidates)), 2):
+        if frozenset((candidates[i]['id'], candidates[j]['id'])) in rejected:
+            continue
+        pair_scores[i, j] = (scorer.batch('breed', [candidates[i], candidates[j]])['score'] if scorer
+                             else utility[candidates[i]['level'], candidates[j]['level']])
+    ranked_pairs = sorted(pair_scores, key=lambda pair: -pair_scores[pair])
     initial = tuple((max(0, math.ceil(f['ready_at'] - now)), 1 if f['basic'] else f['remaining_breeds']) for f in candidates)
     nodes = 0
     limited = False
@@ -276,10 +299,8 @@ def _protected_breed_plan(s: dict, config: dict) -> dict:
             return 0.0, ('hold', (), at)
         best = (0.0, ('hold', (), at))
         if hearts:
-            ready = [i for i, (ready_at, count) in enumerate(state) if count > 0 and ready_at <= at]
-            pairs = sorted((ij for ij in combinations(ready, 2)
-                            if frozenset(candidates[i]['id'] for i in ij) not in rejected),
-                           key=lambda ij: -utility[candidates[ij[0]]['level'], candidates[ij[1]]['level']])[:16]
+            ready = {i for i, (ready_at, count) in enumerate(state) if count > 0 and ready_at <= at}
+            pairs = [pair for pair in ranked_pairs if pair[0] in ready and pair[1] in ready][:16]
             for i, j in pairs:
                 changed = list(state)
                 for index in (i, j):
@@ -289,7 +310,7 @@ def _protected_breed_plan(s: dict, config: dict) -> dict:
                 future, _ = solve(at + 1, hearts - 1, next_due, tuple(changed), actions - 1)
                 # Earlier high-quality outcomes create earlier opportunities to
                 # replan/use the real newborn. This timing preference is explicit.
-                score = math.exp(-at / horizon) * utility[candidates[i]['level'], candidates[j]['level']] + future
+                score = math.exp(-at / horizon) * pair_scores[i, j] + future
                 if score > best[0] + 1e-9:
                     best = score, ('breed', (i, j), at)
         events = [ready_at for ready_at, count in state if count and at < ready_at < horizon]
@@ -303,13 +324,35 @@ def _protected_breed_plan(s: dict, config: dict) -> dict:
         return best
 
     score, (kind, selected, at) = solve(0, s['hearts'], max(0, math.ceil(s['next_heart_at'] - now)), initial, min(3, s['capacity'] - len(s['fish'])))
-    result = {'kind': kind, 'fish_ids': [candidates[i]['id'] for i in selected], 'objective': 'material_rarity_progress' if config.get('_stock_plan') else 'protected_rarity_progress',
+    exploration = 0.0
+    if kind == 'hold' and scorer and scorer.needs and s['hearts'] == 5:
+        # Holding forever cannot improve sparse evidence or build a parent
+        # ladder. Only use this fallback at the heart cap, after both positive
+        # actions and useful waits were exhausted. Existing guards still apply.
+        ready_pairs = [pair for pair in ranked_pairs
+                       if all(initial[i][0] == 0 and initial[i][1] > 0 for i in pair)]
+        if ready_pairs:
+            def priority(pair):
+                return scorer.exploration_priority(scorer.batch('breed', [candidates[i] for i in pair]))
+            selected = max(ready_pairs, key=priority)
+            exploration = priority(selected)
+            if exploration > 0:
+                kind, at = 'breed', 0
+                score = pair_scores[selected]
+    result = {'kind': kind, 'fish_ids': [candidates[i]['id'] for i in selected], 'objective': 'material_and_parent_progress' if scorer else 'protected_rarity_progress',
               'profit_estimate': None, 'lookahead_utility': score, 'search_nodes': nodes, 'search_limited': limited,
-              'reason': 'Target missing material rarities; species/star odds unknown' if config.get('_stock_plan') else 'Compare current parents against cooldown/heart events; no Grade or price distribution assumed'}
+              'reason': 'Target missing material rarity/stars and replenish useful parents' if scorer else 'Compare current parents against cooldown/heart events; no Grade or price distribution assumed'}
     if kind == 'wait':
         result['until'] = now + at
     if kind == 'breed':
         result['forecast_levels'] = breed_level_probabilities(*(candidates[i]['level'] for i in selected))
+        if scorer:
+            result['material_evaluation'] = scorer.batch('breed', [candidates[i] for i in selected])
+            if exploration:
+                result['material_evaluation'] = {**result['material_evaluation'],
+                                                'decision_basis': 'capped_heart_exploration',
+                                                'exploration_priority': exploration}
+                result['reason'] = 'Full hearts and no positive action or useful wait; explore a guarded pair for missing material profiles'
     return result
 
 
@@ -421,7 +464,7 @@ def decide(s: dict, config: dict, now: float) -> dict:
                     'target_species': craft['species'], 'target_grade': craft['grade'],
                     'reason': season_details['reason'], 'season_details': season_details}
     if config.get('mode') == 'protected' and s.get('breed_retry_after_server_restore', False):
-        retry = _protected_breed_plan(s, config)
+        retry = protected_plan(s, {**config, 'auto_merge': False})
         if retry['kind'] == 'breed':
             retry['reason'] = 'Native server-data restoration completed; perform a new guarded breeding request'
             if season_details is not None:
@@ -440,6 +483,7 @@ def decide(s: dict, config: dict, now: float) -> dict:
 
 def run(runtime: Path, config_path: Path, session: str) -> None:
     last_observation_count = -1
+    observation_model = ObservationModel()
     started = time.monotonic()
     market = MarketMonitor(runtime)
     while True:
@@ -467,9 +511,11 @@ def run(runtime: Path, config_path: Path, session: str) -> None:
             events = sorted((runtime / 'events').glob('*.json'))
             if len(events) != last_observation_count:
                 records = learning_records(events)
+                observation_model = ObservationModel(records)
                 if records:
                     atomic(runtime / 'observed-rules.json', learn_rules(records, 'confirmed local game callbacks'))
                 last_observation_count = len(events)
+            cfg['_observation_model'] = observation_model
             rejected = recent_rejected_actions(runtime, time.time())
             cfg['_deferred_merge_batches'] = rejected['merge']
             cfg['_deferred_breed_pairs'] = rejected['breed'] + recent_unpersisted_breed_pairs(runtime, time.time())

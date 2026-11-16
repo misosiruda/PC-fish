@@ -14,6 +14,65 @@ from test_bridge import CONFIG, live_fish, snapshot
 
 
 class WorkerIPCTests(unittest.TestCase):
+    def test_worker_uses_new_confirmed_observations_for_star_selection(self):
+        from test_breeding_policy import observation
+        from test_stock_policy import CFG, need, policy_state
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config_path = root / 'config.json'
+            atomic(config_path, CFG)
+            events = root / 'events'
+            events.mkdir()
+            # Isolated fixtures use the ordinary receipt schema to exercise the
+            # production ingestion path. No runtime directory or server is used.
+            for index, (grades, result_grade) in enumerate([([1, 1], 1), ([1, 3], 1), ([3, 3], 3)]):
+                atomic(events / f'{index}.json', observation(str(index), grades, result_grade))
+            fishes = [live_fish('low-a', level=1), live_fish('low-b', level=1),
+                      live_fish('star-a', level=1, grade=3), live_fish('star-b', level=1, grade=3)]
+            s = policy_state(fishes, [need(1, grade=3)])
+
+            def publish():
+                s['captured_at'] = time.time()
+                s['next_heart_at'] = s['captured_at'] + 420
+                s['config_digest'] = sha256(config_path.read_bytes()).hexdigest()
+                atomic(root / 'snapshot.json', s)
+
+            publish()
+            proc = subprocess.Popen([sys.executable, '-m', 'pcfish_planner.bridge', '--runtime', str(root),
+                                     '--config', str(config_path), '--pid', str(os.getpid()), '--session', 'test'],
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            try:
+                deadline = time.monotonic() + 10
+                while not (root / 'command.json').exists() and time.monotonic() < deadline:
+                    publish()
+                    self.assertIsNone(proc.poll())
+                    time.sleep(.1)
+                command = read_json(root / 'command.json')
+                self.assertEqual(set(command['fish_ids']), {'star-a', 'star-b'})
+                self.assertEqual(read_json(root / 'recommendation.json')['material_evaluation']['observed_events'], 3)
+                # An additional real-shaped receipt is incorporated without a
+                # worker restart, while the existing command remains in place.
+                atomic(events / 'next.json', observation('next', [3, 3], 4))
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline:
+                    publish()
+                    report = read_json(root / 'recommendation.json')
+                    if report.get('material_evaluation', {}).get('observed_events') == 4:
+                        break
+                    self.assertIsNone(proc.poll())
+                    time.sleep(.1)
+                self.assertEqual(report['material_evaluation']['observed_events'], 4)
+                self.assertEqual(read_json(root / 'command.json')['request_id'], command['request_id'])
+                s['session'] = 'replacement'
+                publish()
+                self.assertEqual(proc.wait(timeout=5), 0)
+            finally:
+                if proc.poll() is None:
+                    proc.terminate()
+                _, stderr = proc.communicate(timeout=5)
+                self.assertEqual(stderr, b'')
+
     def test_market_worker_holds_unknown_and_emits_only_after_native_review(self):
         # Seed only a synthetic cache: this subprocess test never contacts Steam.
         with tempfile.TemporaryDirectory() as d:
