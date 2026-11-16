@@ -1,6 +1,6 @@
 """Observed star distributions and material/parent utility for Protected mode.
 
-These are pooled estimates and policy scores, not server probability guarantees.
+These are conditional estimates and policy scores, not server probability guarantees.
 The native rarity forecast remains authoritative for possible result levels.
 """
 from collections import Counter, defaultdict
@@ -19,38 +19,33 @@ class ObservationModel:
                    and r.get('kind') in ('breed', 'merge')]
         learned = learn_rules(records, 'confirmed local game callbacks')
         self.events = learned['unique_events']
-        self.grades = defaultdict(Counter)
         self.conditional = defaultdict(Counter)
         self.species = defaultdict(Counter)
         self.species_by_level = defaultdict(Counter)
         for rule in learned['rules']:
-            key = rule['kind'], tuple(sorted(p['grade'] for p in rule['parents']))
+            key = rule['kind'], tuple(sorted((p['level'], p['grade']) for p in rule['parents']))
             for outcome in rule['outcomes']:
                 fish = outcome['fish']
                 count = rule['sample_count'] * outcome['probability']
                 result = fish['grade'], fish['remaining_breeds']
-                self.grades[key][result] += count
                 self.conditional[key, fish['level']][result] += count
                 self.species[rule['kind'], fish['level'], fish['grade']][fish['species']] += count
                 self.species_by_level[rule['kind'], fish['level']][fish['species']] += count
 
     @lru_cache(maxsize=256)
-    def outcomes(self, kind, grades, level):
-        pooled = self.grades[kind, grades]
-        count = sum(pooled.values())
-        if not count:
-            # Untried pairs receive an explicit exploration heuristic. This is
-            # deliberately reported without a grade probability forecast.
+    def outcomes(self, kind, grades, level, parent_levels=None):
+        # Preserve each parent's rarity/star association, not independent pools.
+        levels = parent_levels if parent_levels is not None else (1,) * len(grades)
+        profiles = tuple(sorted(zip(levels, grades)))
+        conditional = self.conditional[(kind, profiles), level]
+        count = sum(conditional.values())
+        if count < 5:
+            # Sparse or different-rarity observations do not establish odds.
+            # This explicit ranking heuristic is also used for unseen pairs.
             grade = max(1, math.ceil(sum(grades) / len(grades)))
-            return {(grade, 1): 1.0}, 0, 'unobserved_star_heuristic'
-        conditional = self.conditional[(kind, grades), level]
-        local_count = sum(conditional.values())
-        # Twenty pooled observations shrink small result-level samples. Parent
-        # order/species/remaining uses are pooled, not asserted to be irrelevant.
-        prior = 20
-        distribution = {outcome: (conditional[outcome] + prior * n / count) / (local_count + prior)
-                        for outcome, n in pooled.items()}
-        return distribution, round(count), 'observed_parent_stars'
+            return {(grade, 1): 1.0}, round(count), 'unobserved_star_heuristic'
+        return ({outcome: n / count for outcome, n in conditional.items()},
+                round(count), 'observed_parent_stars')
 
     @lru_cache(maxsize=1024)
     def species_share(self, kind, level, grade, species, eligible):
@@ -122,7 +117,7 @@ class MaterialScorer:
     @lru_cache(maxsize=2048)
     def evaluate(self, kind, profiles):
         levels = tuple(p[0] for p in profiles)
-        grades = tuple(sorted(p[1] for p in profiles))
+        grades = tuple(p[1] for p in profiles)
         forecast = (breed_level_probabilities(*levels) if kind == 'breed'
                     else merge_level_probabilities(list(levels)))
         spent = Counter()
@@ -134,12 +129,15 @@ class MaterialScorer:
                    for profile, count in remaining.items())
         direct = future = 0.0
         joint = []
-        samples = 0
+        sample_counts = []
+        bases = []
         basis = 'observed_parent_stars'
         for level, level_probability in forecast.items():
             if not level_probability:
                 continue
-            distribution, samples, basis = self.model.outcomes(kind, grades, level)
+            distribution, samples, basis = self.model.outcomes(kind, grades, level, levels)
+            sample_counts.append(samples)
+            bases.append(basis)
             for (grade, uses), star_probability in distribution.items():
                 probability = level_probability * star_probability
                 direct += probability * self.material_value(kind, level, grade)
@@ -152,7 +150,9 @@ class MaterialScorer:
         # protection/price state and the uncertainty of subsequent offspring.
         parent_gain = 0.5 * (future - cost)
         return dict(score=direct + parent_gain, material_score=direct, parent_score=parent_gain,
-                    sample_count=samples, evidence=basis, observed_events=self.model.events,
+                    sample_count=min(sample_counts, default=0),
+                    evidence='observed_parent_stars' if bases and all(b == 'observed_parent_stars' for b in bases)
+                    else 'unobserved_star_heuristic', observed_events=self.model.events,
                     outcome_weights=joint, next_recipe_grade=self.stage)
 
     def batch(self, kind, fish):

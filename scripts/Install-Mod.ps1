@@ -9,7 +9,7 @@ $fishTaskPointer = Join-Path $fishTaskVar 'mod-installation.json'
 if (Get-Process -Name PCFish -ErrorAction SilentlyContinue) { throw 'Close PC FISH before installing or updating the mod.' }
 $fishTaskGame = (Resolve-Path -LiteralPath $GameRoot).Path
 $fishTaskHash = (Get-FileHash -LiteralPath (Join-Path $fishTaskGame 'GameAssembly.dll')).Hash
-if ($fishTaskHash -ne 'F5F98F82FE2FED5F177B440DF07C9084C814EB8C5C9A141661A67FF184149F93') { throw 'This game build has not been validated. Reinspect bindings before installation.' }
+if ($fishTaskHash -ne '832C9EB6DB770DE6F489BAA6EAAA84A45BBFBABB31895757DDD4EA92D26A0E7F') { throw 'This game build has not been validated. Reinspect bindings before installation.' }
 if ($LoaderOnly -and -not (Test-Path -LiteralPath $fishTaskLoader)) { throw 'BepInEx be.793 package is missing under tools.' }
 if (-not $LoaderOnly -and -not (Test-Path -LiteralPath (Join-Path $fishTaskGame 'BepInEx\core\BepInEx.Unity.IL2CPP.dll'))) { throw 'Install the BepInEx IL2CPP loader first.' }
 if (-not $LoaderOnly -and -not (Test-Path -LiteralPath $fishTaskPlugin)) { throw 'Build the plugin before installation, or use -LoaderOnly.' }
@@ -51,5 +51,6 @@ foreach($fishTaskFile in $fishTaskFiles){
     New-Item -ItemType Directory -Path (Split-Path $fishTaskDestination -Parent) -Force | Out-Null
     Copy-Item -LiteralPath $fishTaskFile.source -Destination $fishTaskDestination -Force
 }
+$fishTaskManifest.game_assembly_sha256 = $fishTaskHash
 $fishTaskManifest | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $fishTaskPointer
 Write-Output "Installed $($fishTaskFiles.Count) files. Manifest: $fishTaskPointer"

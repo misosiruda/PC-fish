@@ -1,24 +1,24 @@
 # 설치·업데이트·제거
 
-이 안내는 **PC FISH Automation 0.5.0 / Windows x64** 기준이다. PowerShell 명령은 **PowerShell 7**에서 실행한다.
+이 안내는 **PC FISH Automation 0.5.1 / Windows x64** 기준이다. 지원 게임은 PC FISH 1.7.0이며 이전 게임에는 이전 호환 버전을 사용한다. PowerShell 명령은 **PowerShell 7**에서 실행한다.
 
 ## 지원 환경과 다운로드
 
 | 구성 | 요구 사항 |
 | --- | --- |
-| 게임 | PC FISH 1.6.2, Steam build 26315872, Unity 6000.0.76f1 IL2CPP x64 |
+| 게임 | PC FISH 1.7.0, Steam build 26614171, Unity 6000.0.76f1 IL2CPP x64 |
 | Python | 3.12 이상. 프로젝트 폴더의 `.venv` 권장 |
 | 시세 조회 | Google Chrome, Python의 Selenium 자동화 의존성 |
 | 로더 | BepInEx `6.0.0-be.793+dbc82f0`, **Unity.IL2CPP-win-x64** |
 | 명령 실행 | PowerShell 7 |
 | 소스 빌드만 | .NET 8 SDK, 해당 게임에서 생성한 BepInEx interop 참조 |
 
-[GitHub 릴리즈](https://github.com/misosiruda/PC-fish/releases/tag/v0.5.0)에서 `PCFish-Automation-v0.5.0-win-x64.zip`과 `SHA256SUMS.txt`를 받는다. ZIP에는 빌드된 DLL과 계획기 소스가 함께 들어 있다. DLL만 복사하면 Python 계획기가 실행되지 않는다.
+[GitHub 릴리즈](https://github.com/misosiruda/PC-fish/releases/tag/v0.5.1)에서 `PCFish-Automation-v0.5.1-win-x64.zip`과 `SHA256SUMS.txt`를 받는다. ZIP에는 빌드된 DLL과 계획기 소스가 함께 들어 있다. DLL만 복사하면 Python 계획기가 실행되지 않는다.
 
 다운로드한 ZIP의 체크섬을 `SHA256SUMS.txt`와 비교한다.
 
 ```powershell
-Get-FileHash '.\PCFish-Automation-v0.5.0-win-x64.zip' -Algorithm SHA256
+Get-FileHash '.\PCFish-Automation-v0.5.1-win-x64.zip' -Algorithm SHA256
 ```
 
 Python은 [공식 다운로드](https://www.python.org/downloads/windows/), Chrome은 [공식 다운로드](https://www.google.com/chrome/), PowerShell은 [Microsoft 설치 안내](https://learn.microsoft.com/powershell/scripting/install/installing-powershell-on-windows)를 따른다. BepInEx는 [공식 빌드 목록](https://builds.bepinex.dev/projects/bepinex_be)의 **#793 / Unity.IL2CPP-win-x64**를 사용한다. Mono·x86용을 선택하지 않는다. 로더 초기 실행 과정은 [공식 IL2CPP 설치 안내](https://docs.bepinex.dev/master/articles/user_guide/installation/unity_il2cpp.html)에도 나와 있다.
@@ -77,7 +77,7 @@ $fishConfig | ConvertTo-Json -Depth 10 | Set-Content '.\mod\pcfish-automation.js
 ```
 
 5. 게임의 `BepInEx\config\pcfish-automation.json`에서 `python_path`와 `project_root`를 확인한다. 프로젝트 위치를 바꿨다면 이 경로도 변경해야 한다. 기존 보호 정책·시즌 목표·잠금은 자동 변경하지 않는다.
-6. 게임을 실행하고 `Set-Automation.ps1 -Mode Status`에서 `version=0.5.0`와 계획기 상태를 확인한다. 현재 기본 시세 정책으로 재개하려면 다음 명령을 사용한다.
+6. 게임을 실행하고 `Set-Automation.ps1 -Mode Status`에서 `version=0.5.1`와 계획기 상태를 확인한다. 현재 기본 시세 정책으로 재개하려면 다음 명령을 사용한다.
 
 ```powershell
 & '.\scripts\Set-Automation.ps1' -Mode Protected -Protection Market -MergePriceBasis HighestBuyOrder -GameRoot $fishGameRoot
@@ -124,4 +124,4 @@ GitHub Source code 또는 Git 복제본에는 DLL이 없다. 위 로더 설치�
 
 상태 파일은 게임의 `BepInEx\PCFishAutomation` 아래에 있다. 지원 요청은 [GitHub Issues](https://github.com/misosiruda/PC-fish/issues)에 버전·오류·재현 순서를 남긴다.
 
-검증한 `GameAssembly.dll` SHA-256: `F5F98F82FE2FED5F177B440DF07C9084C814EB8C5C9A141661A67FF184149F93`.
+검증한 `GameAssembly.dll` SHA-256: `832C9EB6DB770DE6F489BAA6EAAA84A45BBFBABB31895757DDD4EA92D26A0E7F`. 호환성 검토 범위는 [1.7.0 검토 기록](compatibility-1.7.0.md)을 참고한다.

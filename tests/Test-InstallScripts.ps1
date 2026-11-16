@@ -14,7 +14,7 @@ Set-Content (Join-Path $fishTestSource 'mod\pcfish-automation.json') '{"enabled"
 Set-Content (Join-Path $fishTestGame 'GameAssembly.dll') 'synthetic-game'
 Set-Content (Join-Path $fishTestGame 'BepInEx\core\BepInEx.Unity.IL2CPP.dll') 'synthetic-loader'
 $fishTestProcess=$false
-$fishTestHash='F5F98F82FE2FED5F177B440DF07C9084C814EB8C5C9A141661A67FF184149F93'
+$fishTestHash='832C9EB6DB770DE6F489BAA6EAAA84A45BBFBABB31895757DDD4EA92D26A0E7F'
 function Get-Process { param($Name,$ErrorAction) if($fishTestProcess){[PSCustomObject]@{Name='PCFish'}} }
 function Get-FileHash { param($LiteralPath) [PSCustomObject]@{Hash=$fishTestHash} }
 function Assert-FishTest { param($Condition,$Message) if(-not $Condition){throw $Message} }
@@ -35,7 +35,7 @@ try {
     $fishTestProcess=$false
     $fishTestHash='unsupported'
     Assert-FishFailure { & $fishTestInstall -GameRoot $fishTestGame } '*not been validated*'
-    $fishTestHash='F5F98F82FE2FED5F177B440DF07C9084C814EB8C5C9A141661A67FF184149F93'
+    $fishTestHash='832C9EB6DB770DE6F489BAA6EAAA84A45BBFBABB31895757DDD4EA92D26A0E7F'
     Assert-FishFailure { & $fishTestInstall -LoaderOnly -GameRoot $fishTestGame } '*package is missing*'
     Remove-Item -LiteralPath (Join-Path $fishTestGame 'BepInEx\core\BepInEx.Unity.IL2CPP.dll')
     Assert-FishFailure { & $fishTestInstall -GameRoot $fishTestGame } '*loader first*'
@@ -47,7 +47,12 @@ try {
     Set-Content $fishTestConfig '{"enabled":false,"project_root":"custom-preserved"}'
     $fishTestConfigBefore=[IO.File]::ReadAllBytes($fishTestConfig)
     Set-Content (Join-Path $fishTestSource 'mod\PCFish.Automation\bin\Release\net6.0\PCFish.Automation.dll') 'updated-plugin'
+    $fishTestManifestPath=Join-Path $fishTestSource 'var\mod-installation.json'
+    $fishTestManifest=Get-Content $fishTestManifestPath -Raw | ConvertFrom-Json
+    $fishTestManifest.game_assembly_sha256='previous-build'
+    $fishTestManifest | ConvertTo-Json -Depth 8 | Set-Content $fishTestManifestPath
     & $fishTestInstall -GameRoot $fishTestGame
+    Assert-FishTest ((Get-Content $fishTestManifestPath -Raw | ConvertFrom-Json).game_assembly_sha256 -eq $fishTestHash) 'Installed game hash was not refreshed.'
     Assert-FishTest ((Get-Content $fishTestInstalled -Raw).Trim() -eq 'updated-plugin') 'Updated DLL missing.'
     Assert-FishTest ([Convert]::ToBase64String([IO.File]::ReadAllBytes($fishTestConfig)) -eq [Convert]::ToBase64String($fishTestConfigBefore)) 'Existing config changed.'
     & $fishTestRemove

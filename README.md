@@ -2,7 +2,9 @@
 
 PC FISH의 교배·일반 합성·시즌 제작·수조 레벨업을 자동으로 진행하는 Windows 모드다. 게임 내부 상태와 기존 게임 기능을 사용하며, 마우스·키보드 입력이나 포커스 전환 없이 백그라운드에서 작동한다. 게임을 실행해 둔 동안에만 진행한다.
 
-**현재 공개 버전: 0.5.0** · [다운로드와 릴리즈 노트](https://github.com/misosiruda/PC-fish/releases/tag/v0.5.0) · [변경 이력](CHANGELOG.md) · [설치·업데이트](docs/installation.md)
+**현재 공개 버전: 0.5.1** · [다운로드와 릴리즈 노트](https://github.com/misosiruda/PC-fish/releases/tag/v0.5.1) · [변경 이력](CHANGELOG.md) · [설치·업데이트](docs/installation.md)
+
+**0.5.1은 PC FISH 1.7.0 호환 버전**이다. [호환성 검토](docs/compatibility-1.7.0.md)를 참고한다.
 
 **0.5.0**부터 [5성 우선 수집과 비축 정책](docs/season-stock-policy.md)을 적용한다. 시즌에는 가장 높은 희귀도의 어종부터 5성을 확보하고 부족한 4·3·2·1성을 채우며, 비시즌에는 모든 일반 어종의 별 등급별 재료를 비축한다.
 
@@ -22,9 +24,9 @@ PC FISH의 교배·일반 합성·시즌 제작·수조 레벨업을 자동으�
 
 ## 다운로드와 설치
 
-지원 대상은 **Windows x64 / PC FISH 1.6.2 / Steam build 26315872**다. 설치 스크립트와 플러그인은 검증한 `GameAssembly.dll`의 SHA-256을 확인한다. 게임 업데이트로 파일이 바뀌면 새 호환 버전이 필요하다.
+지원 대상은 **Windows x64 / PC FISH 1.7.0 / Steam build 26614171**다. 설치 스크립트와 플러그인은 검증한 `GameAssembly.dll`의 SHA-256을 확인한다. 게임 업데이트로 파일이 바뀌면 새 호환 버전이 필요하다.
 
-1. [0.5.0 릴리즈](https://github.com/misosiruda/PC-fish/releases/tag/v0.5.0)의 **`PCFish-Automation-v0.5.0-win-x64.zip`**을 내려받아 계속 사용할 폴더에 푼다.
+1. [0.5.1 릴리즈](https://github.com/misosiruda/PC-fish/releases/tag/v0.5.1)의 **`PCFish-Automation-v0.5.1-win-x64.zip`**을 내려받아 계속 사용할 폴더에 푼다.
 2. [설치 안내](docs/installation.md)에 따라 Python 3.12 이상, Google Chrome, BepInEx IL2CPP 로더를 준비한다.
 3. Python 환경과 설정 경로를 맞춘 뒤 게임을 종료하고 모드를 설치한다. **새 설치의 기본값은 Protected 자동 실행**이며, 교배·합성·시즌 제작·레벨업이 켜져 있다.
 

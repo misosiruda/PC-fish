@@ -20,7 +20,7 @@ using UnityEngine;
 
 namespace PCFish.Automation;
 
-[BepInPlugin("local.pcfish.automation", "PC FISH Automation", "0.5.0")]
+[BepInPlugin("local.pcfish.automation", "PC FISH Automation", "0.5.1")]
 public sealed partial class Plugin : BasePlugin
 {
     internal static Plugin Current = null!;
@@ -73,7 +73,7 @@ public sealed partial class Plugin : BasePlugin
         using (var stream = File.OpenRead(binary))
         using (var hash = SHA256.Create())
         {
-            if (Convert.ToHexString(hash.ComputeHash(stream)) != "F5F98F82FE2FED5F177B440DF07C9084C814EB8C5C9A141661A67FF184149F93")
+            if (Convert.ToHexString(hash.ComputeHash(stream)) != "832C9EB6DB770DE6F489BAA6EAAA84A45BBFBABB31895757DDD4EA92D26A0E7F")
             {
                 message = "Game updated: bindings need reinspection";
                 Status("unsupported_build");
@@ -138,7 +138,7 @@ public sealed partial class Plugin : BasePlugin
         }
     }
     void Status(string state, object extra = null) => Atomic(Path.Combine(root, "status.json"), new
-    { version = "0.5.0", session, captured_at = Now, state, message, in_flight = inFlight, uncertain, pending_id = pendingId,
+    { version = "0.5.1", session, captured_at = Now, state, message, in_flight = inFlight, uncertain, pending_id = pendingId,
         native_breed_retry = nativeBreedRetry,
         native_comparison = nativeComparison,
         native_breed_flow = NativeBreedRequest ? recovery.flow : "",

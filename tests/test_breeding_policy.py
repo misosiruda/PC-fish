@@ -32,8 +32,29 @@ class BreedingObservationTests(unittest.TestCase):
         learned = ObservationModel(records)
         self.assertEqual(learned.events, 1)
         distribution, count, basis = learned.outcomes('breed', (3, 3), 1)
-        self.assertEqual((count, basis), (1, 'observed_parent_stars'))
-        self.assertEqual(distribution, {(4, 2): 1})
+        self.assertEqual((count, basis), (1, 'unobserved_star_heuristic'))
+        self.assertEqual(distribution, {(3, 1): 1})
+
+    def test_sparse_and_cross_rarity_samples_do_not_become_certain_outcomes(self):
+        record = observation('one', [4, 4], 5, child_level=2)
+        record['parents'][1]['level'] = 3
+        learned = ObservationModel([record])
+        distribution, count, basis = learned.outcomes('breed', (4, 4), 1, (1, 1))
+        self.assertEqual((distribution, count, basis), ({(4, 1): 1.0}, 0, 'unobserved_star_heuristic'))
+        distribution, count, basis = learned.outcomes('breed', (4, 4), 2, (1, 3))
+        self.assertEqual((distribution, count, basis), ({(4, 1): 1.0}, 1, 'unobserved_star_heuristic'))
+
+    def test_parent_level_grade_association_is_preserved(self):
+        records = []
+        for i in range(5):
+            record = observation(str(i), [2, 4], 5, child_level=2)
+            record['parents'][1]['level'] = 3
+            records.append(record)
+        learned = ObservationModel(records)
+        self.assertEqual(learned.outcomes('breed', (2, 4), 2, (1, 3))[1], 5)
+        self.assertEqual(learned.outcomes('breed', (4, 2), 2, (3, 1))[1], 5)
+        self.assertEqual(learned.outcomes('breed', (4, 2), 2, (1, 3))[1], 0)
+        self.assertEqual(learned.outcomes('breed', (2, 4), 1, (1, 3))[1], 0)
 
     def test_conflicting_event_is_rejected(self):
         with self.assertRaises(ValidationError):
@@ -43,8 +64,8 @@ class BreedingObservationTests(unittest.TestCase):
         learned = model(([2, 2], 1, dict(child_level=1)), ([2, 2], 3, dict(child_level=3)))
         low, _, _ = learned.outcomes('breed', (2, 2), 1)
         high, _, _ = learned.outcomes('breed', (2, 2), 3)
-        self.assertGreater(low[1, 2], high[1, 2])
-        self.assertGreater(high[3, 2], low[3, 2])
+        self.assertGreater(low.get((1, 2), 0), high.get((1, 2), 0))
+        self.assertGreater(high.get((3, 2), 0), low.get((3, 2), 0))
         self.assertAlmostEqual(sum(low.values()), 1)
         self.assertAlmostEqual(sum(high.values()), 1)
 
@@ -70,7 +91,7 @@ class MaterialSelectionTests(unittest.TestCase):
         before = deepcopy(s)
         action = decide(s, {**CFG, '_observation_model': learned}, 0)
         self.assertEqual((action['kind'], set(action['fish_ids'])), ('breed', {'star-a', 'star-b'}))
-        self.assertEqual(action['material_evaluation']['sample_count'], 30)
+        self.assertEqual(action['material_evaluation']['sample_count'], 0)  # Other forecast rarities remain unobserved.
         self.assertEqual(s, before)
 
     def test_evidence_changes_choice_with_same_inventory(self):
@@ -94,7 +115,7 @@ class MaterialSelectionTests(unittest.TestCase):
     def test_future_parents_can_be_valuable_before_target_star_is_observed(self):
         fishes = [live_fish(f'low-{i}', level=1, breeds=5) for i in range(10)]
         fishes += [live_fish('high-a', level=3, grade=3), live_fish('high-b', level=3, grade=3)]
-        learned = model(([1, 1], 1, {}), ([1, 3], 1, {}), ([3, 3], 4, dict(child_level=3, uses=3)))
+        learned = model(([1, 1], 1, {}), ([1, 3], 1, {}), ([3, 3], 4, dict(level=3, child_level=3, uses=3)))
         action = decide(policy_state(fishes, [need(3, grade=5)]), {**CFG, '_observation_model': learned}, 0)
         self.assertEqual(set(action['fish_ids']), {'high-a', 'high-b'})
         evaluation = action['material_evaluation']
