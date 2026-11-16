@@ -324,6 +324,21 @@ def _protected_breed_plan(s: dict, config: dict) -> dict:
         return best
 
     score, (kind, selected, at) = solve(0, s['hearts'], max(0, math.ceil(s['next_heart_at'] - now)), initial, min(3, s['capacity'] - len(s['fish'])))
+    exploration = 0.0
+    if kind == 'hold' and scorer and scorer.needs and s['hearts'] == 5:
+        # Holding forever cannot improve sparse evidence or build a parent
+        # ladder. Only use this fallback at the heart cap, after both positive
+        # actions and useful waits were exhausted. Existing guards still apply.
+        ready_pairs = [pair for pair in ranked_pairs
+                       if all(initial[i][0] == 0 and initial[i][1] > 0 for i in pair)]
+        if ready_pairs:
+            def priority(pair):
+                return scorer.exploration_priority(scorer.batch('breed', [candidates[i] for i in pair]))
+            selected = max(ready_pairs, key=priority)
+            exploration = priority(selected)
+            if exploration > 0:
+                kind, at = 'breed', 0
+                score = pair_scores[selected]
     result = {'kind': kind, 'fish_ids': [candidates[i]['id'] for i in selected], 'objective': 'material_and_parent_progress' if scorer else 'protected_rarity_progress',
               'profit_estimate': None, 'lookahead_utility': score, 'search_nodes': nodes, 'search_limited': limited,
               'reason': 'Target missing material rarity/stars and replenish useful parents' if scorer else 'Compare current parents against cooldown/heart events; no Grade or price distribution assumed'}
@@ -333,6 +348,11 @@ def _protected_breed_plan(s: dict, config: dict) -> dict:
         result['forecast_levels'] = breed_level_probabilities(*(candidates[i]['level'] for i in selected))
         if scorer:
             result['material_evaluation'] = scorer.batch('breed', [candidates[i] for i in selected])
+            if exploration:
+                result['material_evaluation'] = {**result['material_evaluation'],
+                                                'decision_basis': 'capped_heart_exploration',
+                                                'exploration_priority': exploration}
+                result['reason'] = 'Full hearts and no positive action or useful wait; explore a guarded pair for missing material profiles'
     return result
 
 

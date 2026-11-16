@@ -158,3 +158,19 @@ class MaterialScorer:
     def batch(self, kind, fish):
         profiles = tuple(sorted((f['level'], f['grade'], f['remaining_breeds']) for f in fish))
         return self.evaluate(kind, profiles)
+
+    def exploration_priority(self, evaluation):
+        """Policy ranking for capped-heart stalls, not an outcome probability.
+
+        Empirical zeroes cannot prove that higher stars are impossible. Favor
+        progress toward the missing profiles and under-observed parent pairs.
+        This also permits building a parent ladder from only starter fish.
+        """
+        total = sum(n['missing'] for n in self.needs)
+        if not total:
+            return 0.0
+        progress = sum(o['weight'] * n['missing']
+                       * min(o['level'] / n['level'], 1.0) ** 2
+                       * min(o['grade'] / n['grade'], 1.0) ** 2
+                       for o in evaluation['outcome_weights'] for n in self.needs) / total
+        return progress / math.sqrt(1 + evaluation['sample_count'])

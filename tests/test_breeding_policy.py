@@ -170,6 +170,54 @@ class MaterialSelectionTests(unittest.TestCase):
         self.assertLessEqual({r['level'] for r in weights}, {1, 2, 3})
         self.assertAlmostEqual(sum(r['weight'] for r in weights), 1)
 
+    def test_full_hearts_explore_when_unseen_target_stars_would_stall(self):
+        fishes = [live_fish('a', level=3, grade=4), live_fish('b', level=3, grade=4)]
+        for learned in (ObservationModel(), model(([4, 4], 4, dict(child_level=3, uses=1)))):
+            s = policy_state(fishes, [need(3, grade=5)])
+            cfg = {**CFG, '_observation_model': learned}
+            # Ordinary low-heart decisions retain their capacity cost.
+            self.assertEqual(decide(s, cfg, 0)['kind'], 'hold')
+            s['hearts'] = 5
+            action = decide(s, cfg, 0)
+            self.assertEqual((action['kind'], set(action['fish_ids'])), ('breed', {'a', 'b'}))
+            evaluation = action['material_evaluation']
+            self.assertEqual(evaluation['decision_basis'], 'capped_heart_exploration')
+            self.assertLessEqual(evaluation['score'], 0)
+            self.assertGreater(evaluation['exploration_priority'], 0)
+
+    def test_full_hearts_can_bootstrap_distant_materials_from_starters(self):
+        s = policy_state([live_fish('a', level=0), live_fish('b', level=0)], [need(3, grade=5)])
+        s['hearts'] = 5
+        action = decide(s, CFG, 0)
+        self.assertEqual(action['kind'], 'breed')
+        self.assertEqual(action['material_evaluation']['decision_basis'], 'capped_heart_exploration')
+
+    def test_exploration_retains_locks_readiness_rejections_and_disable(self):
+        s = policy_state([live_fish('a', level=3, grade=4), live_fish('b', level=3, grade=4)], [need(3, grade=5)])
+        s['hearts'] = 5
+        for blocked in ('locked', 'immature', 'rejected', 'disabled', 'full'):
+            state, cfg = deepcopy(s), {**CFG}
+            if blocked == 'locked':
+                state['fish'][0]['locked'] = True
+            elif blocked == 'immature':
+                state['fish'][0].update(ready_at=1000, ready=False)
+            elif blocked == 'rejected':
+                cfg['_deferred_breed_pairs'] = [['a', 'b']]
+            elif blocked == 'disabled':
+                cfg['auto_breed'] = False
+            else:
+                state['capacity'] = len(state['fish'])
+            self.assertEqual(decide(state, cfg, 0)['kind'], 'hold', blocked)
+
+    def test_exploration_does_not_override_useful_wait(self):
+        fishes = [live_fish('a', level=1, grade=1), live_fish('b', level=1, grade=1),
+                  live_fish('c', level=1, grade=3, ready=100), live_fish('d', level=1, grade=3, ready=100)]
+        learned = model(([1, 1], 1, dict(uses=0)), ([1, 3], 1, dict(uses=0)), ([3, 3], 3, {}))
+        s = policy_state(fishes, [need(1, grade=3)])
+        s['hearts'] = 5
+        s['capacity'] = len(fishes) + 1  # Only one child fits; waiting has a concrete benefit.
+        self.assertEqual(decide(s, {**CFG, '_observation_model': learned}, 0)['kind'], 'wait')
+
 
 if __name__ == '__main__':
     unittest.main()
